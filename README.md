@@ -38,3 +38,34 @@ streamlit run quantum_distortion/ui/app_streamlit.py
 ```
 
 Then open the provided local URL in your browser, load an audio file, tweak the controls, and hit Render to hear and visualize the results.
+
+## Validation & Profiling
+
+### Runtime Profiling
+
+Profile the full DSP pipeline on an input file:
+
+```bash
+python scripts/profile_pipeline.py \
+  --infile examples/example_bass.wav
+```
+
+This prints processing time and an approximate real-time factor.
+
+### Scale Alignment Metric
+
+Check how tightly the processed audio aligns to the chosen key/scale (average cents offset of dominant peaks):
+
+```bash
+python scripts/validate_dsp_metrics.py \
+  --infile examples/example_bass.wav \
+  --key C \
+  --scale minor
+```
+
+The script reports the average absolute cents offset for:
+
+- The input signal
+- The processed output
+
+and the difference between them.

@@ -2,9 +2,8 @@ from pathlib import Path
 
 from typing import Tuple, Union, Optional
 
-import numpy as np
-
-import soundfile as sf
+import numpy as np  # type: ignore
+import soundfile as sf  # type: ignore
 
 
 
