@@ -1,0 +1,302 @@
+from __future__ import annotations
+
+
+import sys
+from io import BytesIO
+from pathlib import Path
+from typing import Dict
+
+
+# Add project root to Python path for Streamlit
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+
+import numpy as np
+import soundfile as sf
+import streamlit as st
+
+
+from quantum_distortion.dsp.pipeline import process_audio
+from quantum_distortion.ui.visualizers import (
+    plot_spectrum,
+    plot_oscilloscope,
+    plot_phase_scope,
+)
+
+
+KEY_OPTIONS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+SCALE_OPTIONS = ["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
+TAP_OPTIONS = ["input", "pre_quant", "post_dist", "output"]
+VISUAL_OPTIONS = ["Spectrum", "Oscilloscope", "Phase Scope"]
+
+
+def _audio_to_wav_bytes(audio: np.ndarray, sr: int) -> bytes:
+    """
+    Convert mono audio buffer to WAV bytes suitable for st.audio().
+    """
+    buf = BytesIO()
+    sf.write(buf, audio, sr, format="WAV")
+    buf.seek(0)
+    return buf.read()
+
+
+def _init_session_state() -> None:
+    if "audio" not in st.session_state:
+        st.session_state["audio"] = None  # np.ndarray or None
+    if "sr" not in st.session_state:
+        st.session_state["sr"] = None  # int or None
+    if "processed" not in st.session_state:
+        st.session_state["processed"] = None  # np.ndarray or None
+    if "taps" not in st.session_state:
+        st.session_state["taps"] = None  # Dict[str, np.ndarray] or None
+
+    # Track which file is currently loaded so we don't reset state on every rerun
+    if "loaded_file_name" not in st.session_state:
+        st.session_state["loaded_file_name"] = None  # str | None
+
+
+def main() -> None:
+    st.set_page_config(page_title="Quantum Distortion MVP", layout="wide")
+    _init_session_state()
+
+    st.title("Quantum Distortion — MVP Prototype")
+    st.caption("Spectral Quantized Distortion · Python DSP Prototype")
+
+    # ===========================
+    # Panel 1 — File & Transport
+    # ===========================
+    with st.container():
+        st.subheader("1. File & Transport")
+
+        col_file, col_play = st.columns([2, 2], gap="large")
+
+        with col_file:
+            uploaded = st.file_uploader(
+                "Load audio (WAV / AIF / AIFF)",
+                type=["wav", "aif", "aiff"],
+            )
+
+            if uploaded is not None:
+                # Only reload and reset state if the file has actually changed.
+                last_name = st.session_state.get("loaded_file_name", None)
+                if uploaded.name != last_name:
+                    data, sr = sf.read(uploaded, always_2d=False)
+
+                    audio = np.asarray(data, dtype=np.float32)
+                    if audio.ndim == 2:
+                        audio = audio.mean(axis=1).astype(np.float32)
+
+                    st.session_state["audio"] = audio
+                    st.session_state["sr"] = int(sr)
+
+                    # Reset DSP results because we have a new input file
+                    st.session_state["processed"] = None
+                    st.session_state["taps"] = None
+                    st.session_state["loaded_file_name"] = uploaded.name
+
+                    st.success(f"Loaded file — {len(audio)} samples @ {sr} Hz")
+
+        with col_play:
+            audio = st.session_state["audio"]
+            sr = st.session_state["sr"]
+
+            if audio is not None and sr is not None:
+                st.markdown("**Original Audio**")
+                st.audio(_audio_to_wav_bytes(audio, sr), format="audio/wav")
+
+                if st.session_state["processed"] is not None:
+                    st.markdown("**Processed Audio**")
+                    processed = st.session_state["processed"]
+                    st.audio(_audio_to_wav_bytes(processed, sr), format="audio/wav")
+
+                    # Download processed
+                    dl_bytes = _audio_to_wav_bytes(processed, sr)
+                    st.download_button(
+                        "Download Processed WAV",
+                        data=dl_bytes,
+                        file_name="quantum_distortion_processed.wav",
+                        mime="audio/wav",
+                    )
+            else:
+                st.info("Upload an audio file to begin.")
+
+    st.markdown("---")
+
+    audio = st.session_state["audio"]
+    sr = st.session_state["sr"]
+    if audio is None or sr is None:
+        st.stop()
+
+    # ===========================
+    # Panel 2 — Quantization
+    # ===========================
+    with st.container():
+        st.subheader("2. Quantization Settings")
+
+        col_q1, col_q2 = st.columns(2)
+
+        with col_q1:
+            key = st.selectbox("Key", KEY_OPTIONS, index=0)
+            scale = st.selectbox("Scale", SCALE_OPTIONS, index=1)  # default minor
+
+            snap_percent = st.slider("Snap Strength (%)", min_value=0, max_value=100, value=80)
+            smear_percent = st.slider("Smear (%)", min_value=0, max_value=100, value=30)
+
+        with col_q2:
+            bin_smoothing = st.checkbox("Bin Smoothing (ON)", value=True)
+            pre_quant = st.checkbox("Pre-Quantize", value=True)
+            post_quant = st.checkbox("Post-Quantize", value=True)
+
+    st.markdown("---")
+
+    # ===========================
+    # Panel 3 — Distortion
+    # ===========================
+    with st.container():
+        st.subheader("3. Distortion")
+
+        mode = st.radio("Mode", options=["Wavefold", "Soft Tube"], index=0, horizontal=True)
+
+        if mode == "Wavefold":
+            fold_amount = st.slider("Fold Amount", min_value=0.0, max_value=10.0, value=3.0, step=0.1)
+            bias = st.slider("Symmetry / Bias", min_value=-1.0, max_value=1.0, value=0.0, step=0.05)
+            drive = 1.0
+            warmth = 0.5
+        else:
+            drive = st.slider("Drive", min_value=0.0, max_value=10.0, value=3.0, step=0.1)
+            warmth = st.slider("Warmth", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
+            fold_amount = 1.0
+            bias = 0.0
+
+    st.markdown("---")
+
+    # ===========================
+    # Panel 4 — Output
+    # ===========================
+    with st.container():
+        st.subheader("4. Output")
+
+        col_o1, col_o2 = st.columns(2)
+
+        with col_o1:
+            limiter_on = st.checkbox("Limiter ON", value=True)
+            ceiling_db = st.slider("Limiter Ceiling (dBFS)", min_value=-12.0, max_value=-0.1, value=-1.0, step=0.1)
+
+        with col_o2:
+            dry_wet_percent = st.slider("Dry / Wet (%)", min_value=0, max_value=100, value=100)
+            output_gain_db = st.slider("Output Gain (dB)", min_value=-12.0, max_value=12.0, value=0.0, step=0.5)
+
+    # ===========================
+    # Render Button
+    # ===========================
+    st.markdown("### Render")
+
+    if st.button("Render / Process Audio", type="primary"):
+        snap_strength = snap_percent / 100.0
+        smear = smear_percent / 100.0
+        dry_wet = dry_wet_percent / 100.0
+
+        distortion_mode = "wavefold" if mode == "Wavefold" else "tube"
+        distortion_params: Dict[str, float] = {
+            "fold_amount": float(fold_amount),
+            "bias": float(bias),
+            "drive": float(drive),
+            "warmth": float(warmth),
+        }
+
+        processed, taps = process_audio(
+            audio=audio,
+            sr=sr,
+            key=key,
+            scale=scale,
+            snap_strength=snap_strength,
+            smear=smear,
+            bin_smoothing=bin_smoothing,
+            pre_quant=pre_quant,
+            post_quant=post_quant,
+            distortion_mode=distortion_mode,
+            distortion_params=distortion_params,
+            limiter_on=limiter_on,
+            limiter_ceiling_db=ceiling_db,
+            dry_wet=dry_wet,
+        )
+
+        # Apply output gain (for playback/visualization only)
+        gain_lin = 10.0 ** (output_gain_db / 20.0)
+        processed = (processed * gain_lin).astype(np.float32)
+
+        st.session_state["processed"] = processed
+        st.session_state["taps"] = taps
+        st.success("Processing complete. Scroll down to Analysis Panel.")
+
+    st.markdown("---")
+
+    # ===========================
+    # Panel 5 — Analysis
+    # ===========================
+    st.subheader("5. Analysis & Visualization")
+
+    taps = st.session_state["taps"]
+    processed = st.session_state["processed"]
+
+    if taps is None or processed is None:
+        st.info("Render the audio to enable analysis.")
+        return
+
+    # Work on a copy so we don't mutate session_state
+    taps_local = dict(taps)
+    taps_local["output"] = processed
+
+    col_a1, col_a2 = st.columns([1, 3])
+
+    with col_a1:
+        tap_source = st.selectbox("Tap Source", TAP_OPTIONS, index=3)
+        visual_type = st.radio("View", VISUAL_OPTIONS, index=0)
+
+        show_scale_lines = st.checkbox("Show In-Key Lines (Spectrum)", value=True)
+        max_freq = st.slider(
+            "Max Frequency (Hz)",
+            min_value=2000,
+            max_value=int(sr // 2),
+            value=int(sr // 2),
+            step=1000,
+        )
+
+    with col_a2:
+        buf = taps_local[tap_source]
+
+        if visual_type == "Spectrum":
+            fig = plot_spectrum(
+                audio=buf,
+                sr=sr,
+                tap_source=tap_source,  # type: ignore[arg-type]
+                key=key,
+                scale=scale,
+                show_scale_lines=show_scale_lines,
+                max_freq=float(max_freq),
+            )
+            st.pyplot(fig, clear_figure=True)
+
+        elif visual_type == "Oscilloscope":
+            fig = plot_oscilloscope(
+                audio=buf,
+                sr=sr,
+                tap_source=tap_source,  # type: ignore[arg-type]
+                duration=0.02,
+            )
+            st.pyplot(fig, clear_figure=True)
+
+        else:  # "Phase Scope"
+            fig = plot_phase_scope(
+                audio=buf,
+                sr=sr,
+                tap_source=tap_source,  # type: ignore[arg-type]
+            )
+            st.pyplot(fig, clear_figure=True)
+
+
+if __name__ == "__main__":
+    main()
+
