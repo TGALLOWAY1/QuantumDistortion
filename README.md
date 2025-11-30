@@ -20,3 +20,21 @@ MVP features:
 
 
 This MVP is a Python prototype intended to validate the DSP design before building a JUCE VST plugin.
+
+## Usage
+
+### CLI Offline Render
+
+```bash
+python scripts/render_cli.py \
+  --infile examples/example_bass.wav \
+  --outfile examples/example_bass_qd.wav
+```
+
+### Streamlit UI
+
+```bash
+streamlit run quantum_distortion/ui/app_streamlit.py
+```
+
+Then open the provided local URL in your browser, load an audio file, tweak the controls, and hit Render to hear and visualize the results.
