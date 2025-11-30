@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from typing import Tuple
+from typing import Tuple, Union, Optional
 
 import numpy as np
 
@@ -8,7 +8,7 @@ import soundfile as sf
 
 
 
-def load_audio(path: str | Path, target_sr: int | None = None) -> Tuple[np.ndarray, int]:
+def load_audio(path: Union[str, Path], target_sr: Optional[int] = None) -> Tuple[np.ndarray, int]:
 
     path = Path(path)
 
@@ -18,7 +18,7 @@ def load_audio(path: str | Path, target_sr: int | None = None) -> Tuple[np.ndarr
 
 
 
-def save_audio(path: str | Path, audio: np.ndarray, sr: int) -> None:
+def save_audio(path: Union[str, Path], audio: np.ndarray, sr: int) -> None:
 
     path = Path(path)
 
