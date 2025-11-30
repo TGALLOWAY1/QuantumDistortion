@@ -11,8 +11,13 @@ from quantum_distortion.dsp.pipeline import process_audio
 
 
 def main() -> None:
+    """
+    Quantum Distortion - Offline Renderer
 
-    parser = argparse.ArgumentParser(description="Quantum Distortion - Offline Renderer (M0)")
+    Loads an audio file, runs it through the full DSP pipeline with default
+    parameters (pre/post quantization, distortion, limiter), and saves the result.
+    """
+    parser = argparse.ArgumentParser(description="Quantum Distortion - Offline Renderer")
 
     parser.add_argument("--infile", "-i", required=True)
 
@@ -34,7 +39,7 @@ def main() -> None:
 
     print(f"Loaded: {args.infile} (sr={sr}, shape={audio.shape})")
 
-    print(f"Saved pass-through output → {args.outfile}")
+    print(f"Saved processed output → {args.outfile}")
 
     print("Tap buffers:", list(taps.keys()))
 
