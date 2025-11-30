@@ -1,0 +1,22 @@
+{
+  "include": [
+    "quantum_distortion",
+    "tests",
+    "scripts"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/node_modules"
+  ],
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.7",
+  "typeCheckingMode": "basic",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "pythonVersion": "3.7"
+    }
+  ]
+}
+

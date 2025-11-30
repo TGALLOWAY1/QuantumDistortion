@@ -233,6 +233,11 @@ def quantize_spectrum(
     target_bins = build_target_bins_for_freqs(freqs, key, scale)
 
     new_mags = mags.copy()
+    new_phases = phases.copy()
+
+    # Track energy contributions to each target bin for phase combination
+    target_energy = np.zeros(len(mags), dtype=float)
+    target_phase_sum = np.zeros(len(mags), dtype=complex)
 
     # Move energy toward targets
     for i in range(len(mags)):
@@ -255,8 +260,11 @@ def quantize_spectrum(
         base_energy = energy_to_move * (1.0 - smear)
         smear_energy = energy_to_move * smear
 
-        # Direct target
+        # Direct target: accumulate energy and phase-weighted contribution
         new_mags[target_bin] += base_energy
+        target_energy[target_bin] += base_energy
+        # Phase contribution: use source phase, weighted by energy
+        target_phase_sum[target_bin] += base_energy * np.exp(1j * phases[i])
 
         if smear_energy > 0.0 and smear_radius > 0:
             # Simple Gaussian-like kernel over [target-r, target+r]
@@ -272,7 +280,17 @@ def quantize_spectrum(
             weights_sum = np.sum(weights)
             if weights_sum > 0:
                 weights /= weights_sum
-                new_mags[indices] += smear_energy * weights
+                for idx, weight in zip(indices, weights):
+                    energy_contrib = smear_energy * weight
+                    new_mags[idx] += energy_contrib
+                    target_energy[idx] += energy_contrib
+                    target_phase_sum[idx] += energy_contrib * np.exp(1j * phases[i])
+
+    # Update phases at target bins: use weighted average of contributing phases
+    for i in range(len(mags)):
+        if target_energy[i] > 0.0:
+            # Weighted phase from contributions
+            new_phases[i] = np.angle(target_phase_sum[i])
 
     # Optional bin smoothing
     if bin_smoothing and len(new_mags) > 2:
@@ -282,6 +300,5 @@ def quantize_spectrum(
         smoothed = np.convolve(padded, kernel, mode="same")[1:-1]
         new_mags = smoothed
 
-    # Phases remain unchanged in MVP
-    return new_mags, phases.copy()
+    return new_mags, new_phases
 
