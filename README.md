@@ -1,5 +1,8 @@
 # Quantum Distortion (MVP)
 
+Mockup
+<img width="1024" height="559" alt="image" src="https://github.com/user-attachments/assets/2000d791-a24c-44bf-aecd-5eb478be0ce0" />
+
 
 
 Experimental DSP engine combining spectral pitch quantization with time-domain distortion.
