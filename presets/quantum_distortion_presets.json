@@ -1,0 +1,86 @@
+{
+  "Chordal Noise Wash": {
+    "description": "Turn noisy or wideband content into an in-key, smeared harmonic wash.",
+    "key": "C",
+    "scale": "minor",
+    "snap_strength": 0.85,
+    "smear": 0.6,
+    "bin_smoothing": true,
+    "pre_quant": true,
+    "post_quant": true,
+    "distortion_mode": "wavefold",
+    "distortion_params": {
+      "fold_amount": 3.5,
+      "bias": 0.0,
+      "drive": 1.0,
+      "warmth": 0.5
+    },
+    "limiter_on": true,
+    "limiter_ceiling_db": -1.0,
+    "dry_wet": 1.0
+  },
+
+  "Controlled Dubstep Growl": {
+    "description": "Aggressive, folded bass textures that stay locked to root + fifth.",
+    "key": "F",
+    "scale": "minor",
+    "snap_strength": 0.9,
+    "smear": 0.3,
+    "bin_smoothing": true,
+    "pre_quant": true,
+    "post_quant": true,
+    "distortion_mode": "wavefold",
+    "distortion_params": {
+      "fold_amount": 5.0,
+      "bias": 0.1,
+      "drive": 1.0,
+      "warmth": 0.5
+    },
+    "limiter_on": true,
+    "limiter_ceiling_db": -1.0,
+    "dry_wet": 1.0
+  },
+
+  "Perc To Tonal Clang": {
+    "description": "Push percussive hits into in-key metallic pitched impacts.",
+    "key": "D",
+    "scale": "minor",
+    "snap_strength": 0.75,
+    "smear": 0.4,
+    "bin_smoothing": true,
+    "pre_quant": true,
+    "post_quant": true,
+    "distortion_mode": "tube",
+    "distortion_params": {
+      "fold_amount": 1.0,
+      "bias": 0.0,
+      "drive": 4.0,
+      "warmth": 0.7
+    },
+    "limiter_on": true,
+    "limiter_ceiling_db": -2.0,
+    "dry_wet": 1.0
+  },
+
+  "Subtle Tube Glue": {
+    "description": "Gentle saturation with light quantization to keep things musical.",
+    "key": "C",
+    "scale": "major",
+    "snap_strength": 0.4,
+    "smear": 0.2,
+    "bin_smoothing": true,
+    "pre_quant": true,
+    "post_quant": false,
+    "distortion_mode": "tube",
+    "distortion_params": {
+      "fold_amount": 1.0,
+      "bias": 0.0,
+      "drive": 2.0,
+      "warmth": 0.3
+    },
+    "limiter_on": true,
+    "limiter_ceiling_db": -1.0,
+    "dry_wet": 0.7
+  }
+}
+

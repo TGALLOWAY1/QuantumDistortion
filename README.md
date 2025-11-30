@@ -69,3 +69,45 @@ The script reports the average absolute cents offset for:
 - The processed output
 
 and the difference between them.
+
+## Presets & Demo Recipes
+
+Quantum Distortion ships with a small set of named presets in:
+
+- `presets/quantum_distortion_presets.json`
+
+You can list them and render audio using any preset via the CLI:
+
+```bash
+# List all available presets
+python scripts/render_preset.py --list-presets
+```
+
+Example demo commands:
+
+```bash
+# 1) Chordal Noise Wash
+python scripts/render_preset.py \
+  --infile examples/example_noise.wav \
+  --outfile examples/example_noise_chordal_wash.wav \
+  --preset "Chordal Noise Wash"
+
+# 2) Controlled Dubstep Growl
+python scripts/render_preset.py \
+  --infile examples/example_bass.wav \
+  --outfile examples/example_bass_growl.wav \
+  --preset "Controlled Dubstep Growl"
+
+# 3) Perc To Tonal Clang
+python scripts/render_preset.py \
+  --infile examples/example_perc.wav \
+  --outfile examples/example_perc_clang.wav \
+  --preset "Perc To Tonal Clang"
+```
+
+These are good "portfolio-ready" demonstrations to showcase:
+
+- Pre/Post spectral quantization
+- Smear + bin smoothing
+- Wavefold / tube distortion
+- Limiter safety net keeping things in check
