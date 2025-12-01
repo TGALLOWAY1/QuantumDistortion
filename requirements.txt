@@ -5,3 +5,4 @@ soundfile
 matplotlib
 streamlit
 pytest
+numba
