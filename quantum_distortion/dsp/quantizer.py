@@ -12,6 +12,20 @@ except ImportError:
 
 
 import numpy as np
+from scipy.ndimage import convolve1d
+
+try:
+    import numba
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+    # Create a dummy decorator if Numba is not available
+    class numba:
+        @staticmethod
+        def njit(*args, **kwargs):
+            def decorator(func):
+                return func
+            return decorator
 
 
 ScaleName = Literal["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
@@ -123,7 +137,8 @@ def build_target_bins_for_freqs(
     """
     For each frequency bin, compute the target bin index it should be attracted to,
     based on nearest in-scale note and harmonic weighting.
-
+    
+    Vectorized implementation: operates on all bins at once using broadcasting.
 
     Returns
     -------
@@ -151,24 +166,129 @@ def build_target_bins_for_freqs(
     # Avoid division by zero
     note_weights = np.clip(note_weights, 1e-3, None)
 
-    target_bins = np.arange(len(freqs), dtype=int)
-
-    for i, f in enumerate(freqs):
-        if not valid[i]:
-            continue
-
-        # Weighted distance: smaller is better
-        df = np.abs(note_freqs - f)
-        # cost ~ distance / weight (root/fifths more attractive)
-        cost = df / note_weights
-        idx = int(np.argmin(cost))
-        target_freq = note_freqs[idx]
-
-        # Find nearest FFT bin to target_freq
-        bin_idx = int(np.argmin(np.abs(freqs - target_freq)))
-        target_bins[i] = bin_idx
-
+    # Vectorized computation: for each freq bin, find nearest scale note
+    # Shape: (n_freqs, n_notes) - distance from each freq to each note
+    freqs_2d = freqs[:, np.newaxis]  # Shape: (n_freqs, 1)
+    note_freqs_2d = note_freqs[np.newaxis, :]  # Shape: (1, n_notes)
+    
+    # Weighted distance: smaller is better
+    # Broadcasting: (n_freqs, 1) - (1, n_notes) -> (n_freqs, n_notes)
+    df = np.abs(freqs_2d - note_freqs_2d)
+    # cost ~ distance / weight (root/fifths more attractive)
+    # Broadcasting: (n_freqs, n_notes) / (1, n_notes) -> (n_freqs, n_notes)
+    cost = df / note_weights[np.newaxis, :]
+    
+    # Find index of minimum cost for each freq bin
+    # Shape: (n_freqs,)
+    note_indices = np.argmin(cost, axis=1)
+    
+    # Get target frequencies for each bin
+    target_freqs = note_freqs[note_indices]
+    
+    # For each target frequency, find nearest FFT bin
+    # Vectorized: compute distance from all freqs to each target_freq
+    # Shape: (n_freqs, n_freqs) - distance matrix
+    target_freqs_2d = target_freqs[:, np.newaxis]  # Shape: (n_freqs, 1)
+    freqs_2d = freqs[np.newaxis, :]  # Shape: (1, n_freqs)
+    dist_matrix = np.abs(target_freqs_2d - freqs_2d)  # Shape: (n_freqs, n_freqs)
+    
+    # Find nearest bin for each target frequency
+    target_bins = np.argmin(dist_matrix, axis=1)  # Shape: (n_freqs,)
+    
+    # For invalid bins, keep identity mapping
+    target_bins = np.where(valid, target_bins, np.arange(len(freqs), dtype=int))
+    
     return target_bins
+
+
+@numba.njit
+def _apply_smear_numba(
+    new_mags: np.ndarray,
+    target_energy: np.ndarray,
+    target_phase_sum: np.ndarray,
+    smear_indices: np.ndarray,
+    smear_targets: np.ndarray,
+    smear_energies: np.ndarray,
+    smear_phases: np.ndarray,
+    smear_kernel: np.ndarray,
+    smear_radius: int,
+    n_bins: int,
+) -> None:
+    """
+    Numba-accelerated smear operation: distributes energy around target bins.
+    
+    This function is JIT-compiled by Numba for performance. It operates in-place
+    on the provided arrays. All operations must be Numba-compatible (no Python
+    objects, only NumPy arrays and basic numeric types).
+    
+    Parameters
+    ----------
+    new_mags : np.ndarray
+        Magnitude array to modify in-place, shape (n_bins,)
+    target_energy : np.ndarray
+        Energy accumulation array, shape (n_bins,)
+    target_phase_sum : np.ndarray
+        Complex phase accumulation array, shape (n_bins,)
+    smear_indices : np.ndarray
+        Source bin indices that need smearing, shape (n_smear,)
+    smear_targets : np.ndarray
+        Target bin indices for each source, shape (n_smear,)
+    smear_energies : np.ndarray
+        Energy to smear for each source, shape (n_smear,)
+    smear_phases : np.ndarray
+        Phase values for each source, shape (n_smear,)
+    smear_kernel : np.ndarray
+        Pre-computed Gaussian-like kernel, shape (kernel_size,)
+    smear_radius : int
+        Radius of smear operation
+    n_bins : int
+        Total number of frequency bins
+    
+    Note
+    ----
+    The first call to this function will include JIT compilation overhead (~0.1-1s),
+    but subsequent calls will be significantly faster than the pure Python loop.
+    """
+    kernel_size = smear_kernel.shape[0]
+    kernel_center = smear_radius
+    
+    for i in range(len(smear_indices)):
+        src_idx = smear_indices[i]
+        target_bin = smear_targets[i]
+        energy = smear_energies[i]
+        phase = smear_phases[i]
+        
+        # Create local kernel centered at target_bin
+        start_idx = max(0, target_bin - smear_radius)
+        end_idx = min(n_bins, target_bin + smear_radius + 1)
+        local_size = end_idx - start_idx
+        
+        if local_size > 0:
+            # Extract relevant portion of kernel
+            kernel_start = max(0, smear_radius - target_bin)
+            kernel_end = kernel_start + local_size
+            
+            # Compute local kernel (Numba-compatible operations)
+            local_kernel_sum = 0.0
+            for k in range(kernel_start, kernel_end):
+                local_kernel_sum += smear_kernel[k]
+            
+            if local_kernel_sum > 0.0:
+                # Distribute energy
+                for j in range(local_size):
+                    bin_idx = start_idx + j
+                    kernel_idx = kernel_start + j
+                    weight = smear_kernel[kernel_idx] / local_kernel_sum
+                    local_energy = energy * weight
+                    
+                    new_mags[bin_idx] += local_energy
+                    target_energy[bin_idx] += local_energy
+                    # Complex phase contribution: e^(i*phase) = cos(phase) + i*sin(phase)
+                    # Numba-compatible: construct complex from real and imaginary parts
+                    phase_real = np.cos(phase)
+                    phase_imag = np.sin(phase)
+                    phase_complex = complex(phase_real, phase_imag)
+                    target_phase_sum[bin_idx] += local_energy * phase_complex
 
 
 def quantize_spectrum(
@@ -184,16 +304,18 @@ def quantize_spectrum(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Apply spectral quantization to a single FFT frame.
-
+    
+    Vectorized implementation: all operations use NumPy array operations
+    instead of Python loops.
 
     Parameters
     ----------
     mags : np.ndarray
-        Magnitude spectrum (1D).
+        Magnitude spectrum (1D), shape (n_bins,).
     phases : np.ndarray
         Phase spectrum (1D), same shape as mags.
     freqs : np.ndarray
-        Frequency per bin (1D).
+        Frequency per bin (1D), same shape as mags.
     key : str
         Musical key (e.g. "C", "D#", "A", "Bb").
     scale : ScaleName
@@ -208,10 +330,10 @@ def quantize_spectrum(
     smear_radius : int
         Number of bins on each side of target bin to smear into.
 
-
     Returns
     -------
     new_mags, new_phases
+        Modified magnitude and phase arrays, same shape as input.
     """
     mags = np.asarray(mags, dtype=float)
     phases = np.asarray(phases, dtype=float)
@@ -231,74 +353,109 @@ def quantize_spectrum(
         return mags.copy(), phases.copy()
 
     target_bins = build_target_bins_for_freqs(freqs, key, scale)
+    n_bins = len(mags)
 
-    new_mags = mags.copy()
+    # Vectorized energy movement
+    # Compute energy to move from each source bin
+    energy_to_move = mags * snap_strength
+    # Mask for valid moves (positive energy, valid target bins)
+    valid_mask = (energy_to_move > 0.0) & (target_bins >= 0) & (target_bins < n_bins)
+    
+    # Remove energy from source bins (vectorized)
+    new_mags = mags.copy() - np.where(valid_mask, energy_to_move, 0.0)
+    
+    # Split energy into direct target and smear components
+    base_energy = energy_to_move * (1.0 - smear)  # Direct to target
+    smear_energy = energy_to_move * smear  # To be smeared
+    
+    # Track energy contributions for phase combination
+    target_energy = np.zeros(n_bins, dtype=float)
+    target_phase_sum = np.zeros(n_bins, dtype=complex)
+    
+    # Vectorized direct target accumulation using advanced indexing
+    # For each source bin i, add base_energy[i] to target_bins[i]
+    np.add.at(new_mags, target_bins[valid_mask], base_energy[valid_mask])
+    np.add.at(target_energy, target_bins[valid_mask], base_energy[valid_mask])
+    
+    # Phase contributions: weighted by energy
+    phase_contribs = base_energy[valid_mask] * np.exp(1j * phases[valid_mask])
+    np.add.at(target_phase_sum, target_bins[valid_mask], phase_contribs)
+    
+    # Vectorized smear: distribute energy around target bins
+    # NOTE: This uses Numba-accelerated function for the inner loop, as each source
+    # bin has a different target center making full vectorization difficult.
+    # The Numba JIT compilation happens on first call (~0.1-1s overhead), but
+    # subsequent calls are significantly faster than pure Python loops.
+    if smear > 0.0 and smear_radius > 0:
+        # Build smear kernel: Gaussian-like, centered at 0
+        kernel_size = 2 * smear_radius + 1
+        kernel_center = smear_radius
+        kernel_indices = np.arange(kernel_size, dtype=float) - kernel_center
+        sigma = max(1.0, smear_radius / 2.0)
+        smear_kernel = np.exp(-0.5 * (kernel_indices / sigma) ** 2)
+        smear_kernel /= np.sum(smear_kernel)  # Normalize
+        
+        # Find all source bins that need smearing
+        smear_mask = valid_mask & (smear_energy > 0.0)
+        smear_indices = np.where(smear_mask)[0]
+        
+        if len(smear_indices) > 0:
+            # Vectorized preparation: get all target bins and energies at once
+            smear_targets = target_bins[smear_indices].astype(np.int32)
+            smear_energies = smear_energy[smear_indices].astype(np.float64)
+            smear_phases = phases[smear_indices].astype(np.float64)
+            
+            # Use Numba-accelerated function for smear distribution
+            # This function is JIT-compiled and operates in-place on the arrays
+            if NUMBA_AVAILABLE:
+                _apply_smear_numba(
+                    new_mags,
+                    target_energy,
+                    target_phase_sum,
+                    smear_indices.astype(np.int32),
+                    smear_targets,
+                    smear_energies,
+                    smear_phases,
+                    smear_kernel.astype(np.float64),
+                    np.int32(smear_radius),
+                    np.int32(n_bins),
+                )
+            else:
+                # Fallback to pure Python if Numba is not available
+                # (This should not happen in production, but provides graceful degradation)
+                for idx in range(len(smear_indices)):
+                    src_idx = smear_indices[idx]
+                    target_bin = smear_targets[idx]
+                    energy = smear_energies[idx]
+                    phase = smear_phases[idx]
+                    
+                    start_idx = max(0, target_bin - smear_radius)
+                    end_idx = min(n_bins, target_bin + smear_radius + 1)
+                    local_size = end_idx - start_idx
+                    
+                    if local_size > 0:
+                        kernel_start = max(0, smear_radius - target_bin)
+                        kernel_end = kernel_start + local_size
+                        local_kernel = smear_kernel[kernel_start:kernel_end].copy()
+                        local_kernel /= np.sum(local_kernel)
+                        
+                        local_indices = np.arange(start_idx, end_idx, dtype=int)
+                        local_energy = energy * local_kernel
+                        new_mags[local_indices] += local_energy
+                        target_energy[local_indices] += local_energy
+                        target_phase_sum[local_indices] += local_energy * np.exp(1j * phase)
+    
+    # Vectorized phase update: use weighted average of contributing phases
+    phase_mask = target_energy > 0.0
     new_phases = phases.copy()
+    new_phases[phase_mask] = np.angle(target_phase_sum[phase_mask])
 
-    # Track energy contributions to each target bin for phase combination
-    target_energy = np.zeros(len(mags), dtype=float)
-    target_phase_sum = np.zeros(len(mags), dtype=complex)
-
-    # Move energy toward targets
-    for i in range(len(mags)):
-        mag = mags[i]
-        if mag <= 0.0:
-            continue
-
-        target_bin = target_bins[i]
-        if target_bin < 0 or target_bin >= len(mags):
-            continue
-
-        energy_to_move = mag * snap_strength
-        if energy_to_move <= 0.0:
-            continue
-
-        # Remove from source
-        new_mags[i] -= energy_to_move
-
-        # Split into direct target + smeared neighbors
-        base_energy = energy_to_move * (1.0 - smear)
-        smear_energy = energy_to_move * smear
-
-        # Direct target: accumulate energy and phase-weighted contribution
-        new_mags[target_bin] += base_energy
-        target_energy[target_bin] += base_energy
-        # Phase contribution: use source phase, weighted by energy
-        target_phase_sum[target_bin] += base_energy * np.exp(1j * phases[i])
-
-        if smear_energy > 0.0 and smear_radius > 0:
-            # Simple Gaussian-like kernel over [target-r, target+r]
-            indices = np.arange(
-                max(0, target_bin - smear_radius),
-                min(len(mags), target_bin + smear_radius + 1),
-                dtype=int,
-            )
-            distances = np.abs(indices - target_bin).astype(float)
-            # Gaussian-ish weights (center highest)
-            sigma = max(1.0, smear_radius / 2.0)
-            weights = np.exp(-0.5 * (distances / sigma) ** 2)
-            weights_sum = np.sum(weights)
-            if weights_sum > 0:
-                weights /= weights_sum
-                for idx, weight in zip(indices, weights):
-                    energy_contrib = smear_energy * weight
-                    new_mags[idx] += energy_contrib
-                    target_energy[idx] += energy_contrib
-                    target_phase_sum[idx] += energy_contrib * np.exp(1j * phases[i])
-
-    # Update phases at target bins: use weighted average of contributing phases
-    for i in range(len(mags)):
-        if target_energy[i] > 0.0:
-            # Weighted phase from contributions
-            new_phases[i] = np.angle(target_phase_sum[i])
-
-    # Optional bin smoothing
+    # Optional bin smoothing: use scipy.ndimage.convolve1d for efficiency
     if bin_smoothing and len(new_mags) > 2:
-        kernel = np.array([0.25, 0.5, 0.25], dtype=float)
-        # 'same' convolution
-        padded = np.pad(new_mags, (1, 1), mode="edge")
-        smoothed = np.convolve(padded, kernel, mode="same")[1:-1]
-        new_mags = smoothed
+        # Smoothing kernel: [0.25, 0.5, 0.25] - simple moving average
+        # This approximates the previous behavior of edge-padded convolution
+        smoothing_kernel = np.array([0.25, 0.5, 0.25], dtype=float)
+        new_mags = convolve1d(new_mags, smoothing_kernel, axis=0, mode="nearest")
 
     return new_mags, new_phases
 
