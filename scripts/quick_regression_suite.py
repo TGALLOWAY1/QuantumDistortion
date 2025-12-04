@@ -4,14 +4,19 @@ Quick regression suite for Quantum Distortion audio processing.
 This script processes all test fixtures through the pipeline and reports
 null-test metrics (residual RMS in dB) to track changes over time.
 
+It compares single-band vs multiband processing modes to evaluate the impact
+of the multiband split on transparency and quality.
+
 Usage:
     python scripts/quick_regression_suite.py [--preset PRESET_NAME]
 
 The script:
 1. Locates WAV fixtures in tests/data/
-2. Processes each through process_file_to_file
-3. Computes residual RMS (in dB) between original and processed
-4. Prints summary results
+2. Processes each through process_file_to_file twice:
+   - Single-band mode (use_multiband=False)
+   - Multiband mode (use_multiband=True, crossover_hz=300.0)
+3. Computes residual RMS (in dB) between original and each processed version
+4. Prints comparison results
 
 More negative dB values indicate more transparent processing (closer to original).
 Less negative values indicate more coloration/processing.
@@ -90,50 +95,73 @@ def main() -> None:
     for fixture_path in fixture_files:
         fixture_name = fixture_path.name
         
-        # Build output path: <name>_processed.wav
-        output_name = fixture_path.stem + "_processed.wav"
-        output_path = processed_dir / output_name
+        # Build output paths
+        output_single_name = fixture_path.stem + "_singleband.wav"
+        output_multi_name = fixture_path.stem + "_multiband.wav"
+        output_single_path = processed_dir / output_single_name
+        output_multi_path = processed_dir / output_multi_name
 
-        print(f"Processing: {fixture_name} -> {output_path.name}...", end=" ", flush=True)
+        print(f"Processing: {fixture_name}...", flush=True)
 
         try:
-            # Process the fixture
+            # Process single-band version
+            print(f"  Single-band -> {output_single_name}...", end=" ", flush=True)
             process_file_to_file(
                 fixture_path,
-                output_path,
+                output_single_path,
                 preset=args.preset,
+                extra_params={"use_multiband": False},
             )
+            
+            # Process multiband version
+            print(f"done")
+            print(f"  Multiband -> {output_multi_name}...", end=" ", flush=True)
+            process_file_to_file(
+                fixture_path,
+                output_multi_path,
+                preset=args.preset,
+                extra_params={
+                    "use_multiband": True,
+                    "crossover_hz": 300.0,
+                },
+            )
+            print(f"done")
 
-            # Load original and processed
+            # Load original and both processed versions
             original, _ = load_audio(fixture_path)
-            processed, _ = load_audio(output_path)
+            processed_single, _ = load_audio(output_single_path)
+            processed_multi, _ = load_audio(output_multi_path)
 
-            # Compute null test (residual RMS in dB)
-            residual_db = null_test(original, processed)
+            # Compute null tests (residual RMS in dB)
+            residual_single = null_test(original, processed_single)
+            residual_multi = null_test(original, processed_multi)
 
-            results.append((fixture_name, residual_db))
-            print(f"residual_rms_db={residual_db:.2f}")
+            results.append((fixture_name, residual_single, residual_multi))
 
         except Exception as e:
             print(f"ERROR: {e}")
-            results.append((fixture_name, None))
+            results.append((fixture_name, None, None))
 
     print()
-    print("=" * 60)
-    print("Regression Summary")
-    print("=" * 60)
+    print("=" * 80)
+    print("Regression Summary: Single-Band vs Multiband")
+    print("=" * 80)
     
-    for fixture_name, residual_db in results:
-        if residual_db is not None:
-            print(f"fixture={fixture_name} residual_rms_db={residual_db:.2f}")
+    for fixture_name, residual_single, residual_multi in results:
+        if residual_single is not None and residual_multi is not None:
+            print(f"fixture={fixture_name:25s} single={residual_single:7.2f} dB multiband={residual_multi:7.2f} dB")
         else:
-            print(f"fixture={fixture_name} ERROR")
+            print(f"fixture={fixture_name:25s} ERROR")
     
-    print("=" * 60)
+    print("=" * 80)
     print()
     print("Interpretation:")
     print("  More negative dB = more similar / more transparent")
     print("  Less negative dB = more coloration / processing")
+    print()
+    print("For bass-heavy fixtures (sub_sweep, kick_sub_combo), multiband should")
+    print("typically show better transparency in the low end due to time-domain")
+    print("processing of the low band.")
 
 
 if __name__ == "__main__":

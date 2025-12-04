@@ -53,9 +53,11 @@ python scripts/quick_regression_suite.py --preset <preset_name>
 
 **What it does**:
 1. Locates all WAV fixtures in `tests/data/`
-2. Processes each through `process_file_to_file` (saves to `tests/data/processed/`)
-3. Computes residual RMS (in dB) between original and processed audio
-4. Prints summary results
+2. Processes each through `process_file_to_file` twice:
+   - **Single-band mode**: `*_singleband.wav` - original one-band pipeline (full STFT processing)
+   - **Multiband mode**: `*_multiband.wav` - low-band time-domain (mono-maker + saturation), high-band spectral (STFT pipeline)
+3. Computes residual RMS (in dB) between original and each processed version
+4. Prints comparison results showing both single-band and multiband metrics
 
 **Interpreting Results**:
 - **More negative dB** = more similar to original / more transparent processing
@@ -65,6 +67,16 @@ Typical values:
 - Very transparent: < -60 dB
 - Moderate processing: -40 to -60 dB
 - Heavy processing: > -20 dB
+
+**Multiband Comparison**:
+The regression suite compares single-band vs multiband processing to evaluate the impact of the multiband split:
+- **Single-band**: Full-band audio goes through the complete STFT pipeline (spectral quantization, distortion, etc.)
+- **Multiband**: Audio is split at 300 Hz crossover; low band uses time-domain processing (mono-maker + saturation), high band uses STFT pipeline
+
+**Expected Results**:
+- For **bass-heavy fixtures** (`sub_sweep.wav`, `kick_sub_combo.wav`): Multiband should typically show better transparency in the low end (more negative dB) because the low band avoids STFT artifacts and uses time-domain saturation which preserves transient response better.
+- For **midrange fixtures** (`midrange_growl_like.wav`): Results may be similar or multiband may show slight differences depending on how much content falls in the low vs high band.
+- For **mixed content** (`wobble_bass.wav`): Multiband may show improvements in bass regions while maintaining similar quality in the high end.
 
 The processed outputs are saved to `tests/data/processed/` for manual inspection and listening tests.
 
