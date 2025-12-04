@@ -35,3 +35,36 @@ python scripts/generate_test_fixtures.py
 
 This will overwrite existing fixture files. The script uses deterministic generation, so the output should be identical across runs.
 
+## Regression Testing
+
+### Quick Regression Suite
+
+The `scripts/quick_regression_suite.py` script processes all test fixtures through the Quantum Distortion pipeline and reports null-test metrics (residual RMS in dB) to track changes over time.
+
+**Usage**:
+```bash
+python scripts/quick_regression_suite.py
+```
+
+**With preset**:
+```bash
+python scripts/quick_regression_suite.py --preset <preset_name>
+```
+
+**What it does**:
+1. Locates all WAV fixtures in `tests/data/`
+2. Processes each through `process_file_to_file` (saves to `tests/data/processed/`)
+3. Computes residual RMS (in dB) between original and processed audio
+4. Prints summary results
+
+**Interpreting Results**:
+- **More negative dB** = more similar to original / more transparent processing
+- **Less negative dB** = more coloration / more processing applied
+
+Typical values:
+- Very transparent: < -60 dB
+- Moderate processing: -40 to -60 dB
+- Heavy processing: > -20 dB
+
+The processed outputs are saved to `tests/data/processed/` for manual inspection and listening tests.
+
