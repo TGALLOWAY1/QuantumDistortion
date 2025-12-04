@@ -8,11 +8,11 @@ from tests.utils.audio_test_utils import null_test
 
 def test_multiband_identity_vs_single_band() -> None:
     """
-    Test that multiband mode (with identical processing) produces output
-    reasonably close to single-band mode.
+    Test that multiband mode produces valid output.
     
-    This verifies that the crossover split/recombine path works correctly
-    and doesn't introduce significant artifacts.
+    Note: Multiband mode now uses different processing for low band (mono-maker + saturation)
+    vs high band (STFT pipeline), so it's no longer an "identity" mode. This test verifies
+    that the multiband path works correctly and produces valid output.
     """
     # Load a test fixture
     fixture_path = Path(__file__).parent / "data" / "wobble_bass.wav"
@@ -32,21 +32,7 @@ def test_multiband_identity_vs_single_band() -> None:
         if len(x) > max_samples:
             x = x[:max_samples]
     
-    # Process with single-band mode (default)
-    y_single, taps_single = process_audio(
-        x,
-        sr=sr,
-        snap_strength=0.5,
-        pre_quant=True,
-        post_quant=True,
-        distortion_mode="wavefold",
-        distortion_params={"fold_amount": 1.0, "bias": 0.0},
-        limiter_on=False,
-        dry_wet=1.0,
-        use_multiband=False,
-    )
-    
-    # Process with multiband mode (identity: same processing on both bands)
+    # Process with multiband mode
     y_multi, taps_multi = process_audio(
         x,
         sr=sr,
@@ -59,30 +45,22 @@ def test_multiband_identity_vs_single_band() -> None:
         dry_wet=1.0,
         use_multiband=True,
         crossover_hz=300.0,
+        lowband_drive=1.0,
     )
     
-    # Check output shapes match
-    assert y_single.shape == y_multi.shape, "Output shapes should match"
-    assert y_single.shape == x.shape, "Output should match input shape"
+    # Check output shape matches input
+    assert y_multi.shape == x.shape, "Output should match input shape"
     
-    # Compare outputs using null_test
-    # We don't expect perfect equality due to:
-    # - Crossover filter phase distortion
-    # - Numerical precision differences from processing bands separately
-    # - STFT/iSTFT round-trip differences
-    # But they should be reasonably close (< -20 dB residual)
-    residual_db = null_test(y_single, y_multi)
-    
-    assert residual_db < -20.0, (
-        f"Multiband output should be close to single-band output. "
-        f"Residual: {residual_db:.2f} dB (expected < -20 dB)"
-    )
+    # Check for valid output (no NaNs, no Infs)
+    assert not np.any(np.isnan(y_multi)), "Output should not contain NaN"
+    assert not np.any(np.isinf(y_multi)), "Output should not contain Inf"
     
     # Verify taps structure
-    assert set(taps_single.keys()) == set(taps_multi.keys()), "Tap keys should match"
-    for key in taps_single.keys():
-        assert taps_single[key].shape == taps_multi[key].shape, (
-            f"Tap '{key}' shapes should match"
+    expected_keys = {"input", "pre_quant", "post_dist", "output"}
+    assert set(taps_multi.keys()) == expected_keys, f"Tap keys should match expected: {expected_keys}"
+    for key in taps_multi.keys():
+        assert taps_multi[key].shape == x.shape, (
+            f"Tap '{key}' shape should match input shape"
         )
 
 

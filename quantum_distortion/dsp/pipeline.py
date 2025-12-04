@@ -29,6 +29,7 @@ from quantum_distortion.dsp.distortion import apply_distortion
 from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
 from quantum_distortion.dsp.crossover import linkwitz_riley_split
+from quantum_distortion.dsp.saturation import soft_tube, make_mono_lowband
 
 
 # Default STFT configuration for MVP
@@ -464,6 +465,7 @@ def process_audio(
     preview_enabled: Union[bool, None] = None,
     use_multiband: bool = False,
     crossover_hz: float = 300.0,
+    lowband_drive: float = 1.0,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
@@ -491,6 +493,9 @@ def process_audio(
     crossover_hz : float, optional
         Crossover frequency in Hz for multiband processing. Only used when
         use_multiband=True. Defaults to 300.0 Hz.
+    lowband_drive : float, optional
+        Drive parameter for low-band saturation. Only used when use_multiband=True.
+        Higher values increase saturation. Defaults to 1.0.
     
     Timing information is logged to stdout at the end of processing, including preview mode status.
     """
@@ -543,27 +548,12 @@ def process_audio(
             # Split into low and high bands using Linkwitz-Riley crossover
             low_band, high_band = linkwitz_riley_split(x_in, sr, crossover_hz)
             
-            # Process each band through the full pipeline
-            # Both bands use the same processing parameters (identity mode for now)
-            processed_low, taps_low = _process_single_band(
-                low_band,
-                sr=sr,
-                key=key,
-                scale=scale,
-                snap_strength=snap_strength,
-                smear=smear,
-                bin_smoothing=bin_smoothing,
-                pre_quant=pre_quant,
-                post_quant=post_quant,
-                distortion_mode=distortion_mode,
-                distortion_params=distortion_params,
-                limiter_on=limiter_on,
-                limiter_ceiling_db=limiter_ceiling_db,
-                dry_wet=dry_wet,
-                tap_input=low_band,  # Use band-specific input for dry/wet mix
-                timing=timing,
-            )
+            # Low band path: time-domain only (mono-maker + saturation)
+            # This keeps bass frequencies in the time domain for better transient response
+            low_processed = make_mono_lowband(soft_tube(low_band, drive=lowband_drive))
+            low_processed = low_processed.astype(np.float32)
             
+            # High band path: full STFT pipeline (spectral quantization, etc.)
             processed_high, taps_high = _process_single_band(
                 high_band,
                 sr=sr,
@@ -584,7 +574,7 @@ def process_audio(
             )
             
             # Recombine bands
-            x_out = processed_low + processed_high
+            x_out = low_processed + processed_high
             x_out = x_out.astype(np.float32)
             
             # Ensure output length matches input
@@ -595,12 +585,13 @@ def process_audio(
                     pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
                     x_out = np.concatenate([x_out, pad], axis=0)
             
-            # For taps, use the full-band input and output
-            # (We drop branch-specific taps for simplicity)
+            # For taps, combine low and high band contributions
+            # Low band: use processed low band for post_dist (since it goes through saturation)
+            # High band: use taps from STFT pipeline
             taps = {
                 "input": tap_input,
-                "pre_quant": taps_low["pre_quant"] + taps_high["pre_quant"],
-                "post_dist": taps_low["post_dist"] + taps_high["post_dist"],
+                "pre_quant": taps_high["pre_quant"],  # Only high band has pre_quant
+                "post_dist": low_processed + taps_high["post_dist"],  # Combine low saturation + high distortion
                 "output": x_out.copy(),
             }
         else:
