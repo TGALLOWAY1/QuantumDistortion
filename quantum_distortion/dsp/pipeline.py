@@ -28,6 +28,7 @@ from quantum_distortion.dsp.quantizer import quantize_spectrum
 from quantum_distortion.dsp.distortion import apply_distortion
 from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
+from quantum_distortion.dsp.crossover import linkwitz_riley_split
 
 
 # Default STFT configuration for MVP
@@ -140,6 +141,311 @@ def _apply_spectral_quantization_to_stft(
     return S_q
 
 
+def _process_single_band(
+    x_in: np.ndarray,
+    sr: int,
+    key: str,
+    scale: str,
+    snap_strength: float,
+    smear: float,
+    bin_smoothing: bool,
+    pre_quant: bool,
+    post_quant: bool,
+    distortion_mode: str,
+    distortion_params: Dict[str, Any],
+    limiter_on: bool,
+    limiter_ceiling_db: float,
+    dry_wet: float,
+    tap_input: np.ndarray,
+    timing: Union[RenderTiming, None] = None,
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """
+    Process a single audio band through the full pipeline.
+    
+    This is an internal helper function that processes one band (either full-band
+    in single-band mode, or low/high band in multiband mode).
+    
+    Returns:
+        (processed_audio, taps_dict)
+    """
+    n_samples = x_in.shape[0]
+    
+    # =====================================================================
+    # SINGLE STFT: Compute STFT once for the entire processing pipeline
+    # All spectral operations (pre-quant, post-quant) will operate on this S
+    # =====================================================================
+    stft_start = time.perf_counter()
+    try:
+        S, freqs = stft_mono(
+            x_in,
+            sr=sr,
+            n_fft=N_FFT_DEFAULT,
+            hop_length=HOP_LENGTH_DEFAULT,
+            window=WINDOW_DEFAULT,
+            center=CENTER_DEFAULT,
+        )
+        stft_end = time.perf_counter()
+        if timing is not None:
+            timing.stft = (stft_end - stft_start)
+    except Exception:
+        stft_end = time.perf_counter()
+        if timing is not None:
+            timing.stft = (stft_end - stft_start)
+        raise
+
+    # --- Stage A: Pre-Quantization (operates directly on S) ---
+    # Optimization: If pre-quant is enabled, apply quantization to S.
+    # If post-quant is also enabled, we defer iSTFT until after post-quant
+    # to maintain "single iSTFT" constraint. Otherwise, do iSTFT here.
+    if pre_quant and snap_strength > 0.0:
+        S = _apply_spectral_quantization_to_stft(
+            S,
+            freqs,
+            key=key,
+            scale=scale,
+            snap_strength=snap_strength,
+            smear=smear,
+            bin_smoothing=bin_smoothing,
+            timing=timing,
+        )
+        # Convert to time-domain for tap and distortion
+        # NOTE: If post-quant is also enabled, we defer the final iSTFT
+        # until after post-quant to maintain "single iSTFT" constraint.
+        # This intermediate conversion is necessary for distortion (time-domain only).
+        if not (post_quant and snap_strength > 0.0):
+            # No post-quant, so this is the only iSTFT needed
+            # =================================================================
+            # SINGLE iSTFT: Final reconstruction (no post-quant)
+            # =================================================================
+            istft_start = time.perf_counter()
+            try:
+                x_pre = istft_mono(
+                    S,
+                    sr=sr,
+                    n_fft=N_FFT_DEFAULT,
+                    hop_length=HOP_LENGTH_DEFAULT,
+                    window=WINDOW_DEFAULT,
+                    length=n_samples,
+                    center=CENTER_DEFAULT,
+                )
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+            except Exception:
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+                raise
+            x_pre = x_pre.astype(np.float32)
+        else:
+            # Post-quant will be enabled, so we defer iSTFT until after post-quant
+            # Convert now only for tap and distortion (time-domain required)
+            # This is a temporary conversion - final iSTFT happens after post-quant
+            x_pre_temp = istft_mono(
+                S,
+                sr=sr,
+                n_fft=N_FFT_DEFAULT,
+                hop_length=HOP_LENGTH_DEFAULT,
+                window=WINDOW_DEFAULT,
+                length=n_samples,
+                center=CENTER_DEFAULT,
+            )
+            x_pre = x_pre_temp.astype(np.float32)
+    else:
+        x_pre = x_in.copy()
+
+    tap_pre_quant = x_pre.copy()
+
+    # --- Stage B: Time-Domain Distortion ---
+    mode = distortion_mode or "wavefold"
+
+    fold_amount = float(distortion_params.get("fold_amount", 1.0))
+    bias = float(distortion_params.get("bias", 0.0))
+    drive = float(distortion_params.get("drive", 1.0))
+    warmth = float(distortion_params.get("warmth", 0.5))
+
+    x_post_dist = apply_distortion(
+        x_pre,
+        mode=mode,  # type: ignore[arg-type]
+        fold_amount=fold_amount,
+        bias=bias,
+        drive=drive,
+        warmth=warmth,
+    )
+
+    tap_post_dist = x_post_dist.copy()
+
+    # --- Stage C: Post-Quantization ---
+    # Optimization strategy:
+    # - If only pre-quant OR only post-quant: 1 STFT, 1 iSTFT
+    # - If both pre-quant AND post-quant: 2 STFTs (necessary due to time-domain
+    #   distortion), but still only 1 iSTFT at the very end
+    if post_quant and snap_strength > 0.0:
+        if pre_quant and snap_strength > 0.0:
+            # Both pre-quant and post-quant enabled:
+            # Pre-quant already converted S to time-domain for distortion.
+            # We need a second STFT here because distortion is time-domain only
+            # and changes the signal. This is the only case where we need 2 STFTs.
+            # NOTE: This second STFT is necessary - distortion requires time-domain
+            # processing, so we must convert back to frequency domain for post-quant.
+            stft_start2 = time.perf_counter()
+            try:
+                S_post, freqs_post = stft_mono(
+                    x_post_dist,
+                    sr=sr,
+                    n_fft=N_FFT_DEFAULT,
+                    hop_length=HOP_LENGTH_DEFAULT,
+                    window=WINDOW_DEFAULT,
+                    center=CENTER_DEFAULT,
+                )
+                stft_end2 = time.perf_counter()
+                if timing is not None:
+                    timing.stft += (stft_end2 - stft_start2)
+            except Exception:
+                stft_end2 = time.perf_counter()
+                if timing is not None:
+                    timing.stft += (stft_end2 - stft_start2)
+                raise
+            
+            S_post = _apply_spectral_quantization_to_stft(
+                S_post,
+                freqs_post,
+                key=key,
+                scale=scale,
+                snap_strength=snap_strength,
+                smear=smear,
+                bin_smoothing=bin_smoothing,
+                timing=timing,
+            )
+            
+            # =================================================================
+            # SINGLE iSTFT: Final reconstruction from frequency domain
+            # This is the ONLY iSTFT when both pre-quant and post-quant are enabled
+            # =================================================================
+            istft_start = time.perf_counter()
+            try:
+                x_post_quant = istft_mono(
+                    S_post,
+                    sr=sr,
+                    n_fft=N_FFT_DEFAULT,
+                    hop_length=HOP_LENGTH_DEFAULT,
+                    window=WINDOW_DEFAULT,
+                    length=n_samples,
+                    center=CENTER_DEFAULT,
+                )
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+            except Exception:
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+                raise
+            x_post_quant = x_post_quant.astype(np.float32)
+        else:
+            # Pre-quant was not enabled, so S is still in frequency domain
+            # Apply post-quant directly to S (no second STFT needed)
+            S = _apply_spectral_quantization_to_stft(
+                S,
+                freqs,
+                key=key,
+                scale=scale,
+                snap_strength=snap_strength,
+                smear=smear,
+                bin_smoothing=bin_smoothing,
+                timing=timing,
+            )
+            
+            # =================================================================
+            # SINGLE iSTFT: Final reconstruction from frequency domain
+            # =================================================================
+            istft_start = time.perf_counter()
+            try:
+                x_post_quant = istft_mono(
+                    S,
+                    sr=sr,
+                    n_fft=N_FFT_DEFAULT,
+                    hop_length=HOP_LENGTH_DEFAULT,
+                    window=WINDOW_DEFAULT,
+                    length=n_samples,
+                    center=CENTER_DEFAULT,
+                )
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+            except Exception:
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+                raise
+            x_post_quant = x_post_quant.astype(np.float32)
+    else:
+        # Post-quant not enabled
+        if pre_quant and snap_strength > 0.0:
+            # Pre-quant was applied and already converted to time-domain
+            x_post_quant = x_post_dist.copy()
+        else:
+            # No quantization was applied, convert S to time-domain
+            # =================================================================
+            # SINGLE iSTFT: Final reconstruction from frequency domain
+            # =================================================================
+            istft_start = time.perf_counter()
+            try:
+                x_post_quant = istft_mono(
+                    S,
+                    sr=sr,
+                    n_fft=N_FFT_DEFAULT,
+                    hop_length=HOP_LENGTH_DEFAULT,
+                    window=WINDOW_DEFAULT,
+                    length=n_samples,
+                    center=CENTER_DEFAULT,
+                )
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+            except Exception:
+                istft_end = time.perf_counter()
+                if timing is not None:
+                    timing.istft = (istft_end - istft_start)
+                raise
+            x_post_quant = x_post_quant.astype(np.float32)
+
+    # --- Stage D: Limiter ---
+    if limiter_on:
+        x_limited, _gain = peak_limiter(
+            x_post_quant,
+            sr=sr,
+            ceiling_db=limiter_ceiling_db,
+            lookahead_ms=5.0,
+            release_ms=30.0,
+        )
+    else:
+        x_limited = x_post_quant.copy()
+
+    # --- Dry/Wet Mix ---
+    dry_wet = float(np.clip(dry_wet, 0.0, 1.0))
+    x_out = (dry_wet * x_limited) + ((1.0 - dry_wet) * tap_input)
+    x_out = x_out.astype(np.float32)
+
+    # Ensure output length matches input
+    if x_out.shape[0] != n_samples:
+        if x_out.shape[0] > n_samples:
+            x_out = x_out[:n_samples]
+        else:
+            pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
+            x_out = np.concatenate([x_out, pad], axis=0)
+
+    tap_output = x_out.copy()
+
+    taps = {
+        "pre_quant": tap_pre_quant,
+        "post_dist": tap_post_dist,
+        "output": tap_output,
+    }
+    
+    return x_out, taps
+
+
 def process_audio(
     audio: np.ndarray,
     sr: int = DEFAULT_SAMPLE_RATE,
@@ -156,6 +462,8 @@ def process_audio(
     limiter_ceiling_db: float = DEFAULT_LIMITER_CEILING_DB,
     dry_wet: float = DEFAULT_DRY_WET,
     preview_enabled: Union[bool, None] = None,
+    use_multiband: bool = False,
+    crossover_hz: float = 300.0,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
@@ -163,11 +471,13 @@ def process_audio(
     Pipeline:
         input
           → (optional) preview truncation (if preview_enabled)
+          → (optional) multiband split (if use_multiband=True)
           → (optional) spectral pre-quantization
           → time-domain distortion
           → (optional) spectral post-quantization
           → (optional) limiter
           → dry/wet mix with input
+          → (optional) multiband recombination (if use_multiband=True)
     
     Parameters
     ----------
@@ -175,6 +485,12 @@ def process_audio(
         If True, process only the first PREVIEW_MAX_SECONDS of audio for faster iteration.
         If None, reads from DSP_PREVIEW_MODE environment variable (1/true = enabled, 0/false/absent = disabled).
         Defaults to PREVIEW_ENABLED_DEFAULT from config.
+    use_multiband : bool, optional
+        If True, split audio into low/high bands using Linkwitz-Riley crossover,
+        process each band separately, then recombine. Defaults to False.
+    crossover_hz : float, optional
+        Crossover frequency in Hz for multiband processing. Only used when
+        use_multiband=True. Defaults to 300.0 Hz.
     
     Timing information is logged to stdout at the end of processing, including preview mode status.
     """
@@ -221,278 +537,98 @@ def process_audio(
         tap_input = x_in.copy()
 
         # =====================================================================
-        # SINGLE STFT: Compute STFT once for the entire processing pipeline
-        # All spectral operations (pre-quant, post-quant) will operate on this S
+        # MULTIBAND PROCESSING: Split into low/high bands if enabled
         # =====================================================================
-        stft_start = time.perf_counter()
-        try:
-            S, freqs = stft_mono(
-                x_in,
+        if use_multiband:
+            # Split into low and high bands using Linkwitz-Riley crossover
+            low_band, high_band = linkwitz_riley_split(x_in, sr, crossover_hz)
+            
+            # Process each band through the full pipeline
+            # Both bands use the same processing parameters (identity mode for now)
+            processed_low, taps_low = _process_single_band(
+                low_band,
                 sr=sr,
-                n_fft=N_FFT_DEFAULT,
-                hop_length=HOP_LENGTH_DEFAULT,
-                window=WINDOW_DEFAULT,
-                center=CENTER_DEFAULT,
-            )
-            stft_end = time.perf_counter()
-            if timing is not None:
-                timing.stft = (stft_end - stft_start)
-        except Exception:
-            stft_end = time.perf_counter()
-            if timing is not None:
-                timing.stft = (stft_end - stft_start)
-            raise
-
-        # --- Stage A: Pre-Quantization (operates directly on S) ---
-        # Optimization: If pre-quant is enabled, apply quantization to S.
-        # If post-quant is also enabled, we defer iSTFT until after post-quant
-        # to maintain "single iSTFT" constraint. Otherwise, do iSTFT here.
-        if pre_quant and snap_strength > 0.0:
-            S = _apply_spectral_quantization_to_stft(
-                S,
-                freqs,
                 key=key,
                 scale=scale,
                 snap_strength=snap_strength,
                 smear=smear,
                 bin_smoothing=bin_smoothing,
+                pre_quant=pre_quant,
+                post_quant=post_quant,
+                distortion_mode=distortion_mode,
+                distortion_params=distortion_params,
+                limiter_on=limiter_on,
+                limiter_ceiling_db=limiter_ceiling_db,
+                dry_wet=dry_wet,
+                tap_input=low_band,  # Use band-specific input for dry/wet mix
                 timing=timing,
             )
-            # Convert to time-domain for tap and distortion
-            # NOTE: If post-quant is also enabled, we defer the final iSTFT
-            # until after post-quant to maintain "single iSTFT" constraint.
-            # This intermediate conversion is necessary for distortion (time-domain only).
-            if not (post_quant and snap_strength > 0.0):
-                # No post-quant, so this is the only iSTFT needed
-                # =================================================================
-                # SINGLE iSTFT: Final reconstruction (no post-quant)
-                # =================================================================
-                istft_start = time.perf_counter()
-                try:
-                    x_pre = istft_mono(
-                        S,
-                        sr=sr,
-                        n_fft=N_FFT_DEFAULT,
-                        hop_length=HOP_LENGTH_DEFAULT,
-                        window=WINDOW_DEFAULT,
-                        length=n_samples,
-                        center=CENTER_DEFAULT,
-                    )
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                except Exception:
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                    raise
-                x_pre = x_pre.astype(np.float32)
-            else:
-                # Post-quant will be enabled, so we defer iSTFT until after post-quant
-                # Convert now only for tap and distortion (time-domain required)
-                # This is a temporary conversion - final iSTFT happens after post-quant
-                x_pre_temp = istft_mono(
-                    S,
-                    sr=sr,
-                    n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,
-                    window=WINDOW_DEFAULT,
-                    length=n_samples,
-                    center=CENTER_DEFAULT,
-                )
-                x_pre = x_pre_temp.astype(np.float32)
-        else:
-            x_pre = x_in.copy()
-
-        tap_pre_quant = x_pre.copy()
-
-        # --- Stage B: Time-Domain Distortion ---
-        mode = distortion_mode or "wavefold"
-
-        fold_amount = float(distortion_params.get("fold_amount", 1.0))
-        bias = float(distortion_params.get("bias", 0.0))
-        drive = float(distortion_params.get("drive", 1.0))
-        warmth = float(distortion_params.get("warmth", 0.5))
-
-        x_post_dist = apply_distortion(
-            x_pre,
-            mode=mode,  # type: ignore[arg-type]
-            fold_amount=fold_amount,
-            bias=bias,
-            drive=drive,
-            warmth=warmth,
-        )
-
-        tap_post_dist = x_post_dist.copy()
-
-        # --- Stage C: Post-Quantization ---
-        # Optimization strategy:
-        # - If only pre-quant OR only post-quant: 1 STFT, 1 iSTFT
-        # - If both pre-quant AND post-quant: 2 STFTs (necessary due to time-domain
-        #   distortion), but still only 1 iSTFT at the very end
-        if post_quant and snap_strength > 0.0:
-            if pre_quant and snap_strength > 0.0:
-                # Both pre-quant and post-quant enabled:
-                # Pre-quant already converted S to time-domain for distortion.
-                # We need a second STFT here because distortion is time-domain only
-                # and changes the signal. This is the only case where we need 2 STFTs.
-                # NOTE: This second STFT is necessary - distortion requires time-domain
-                # processing, so we must convert back to frequency domain for post-quant.
-                stft_start2 = time.perf_counter()
-                try:
-                    S_post, freqs_post = stft_mono(
-                        x_post_dist,
-                        sr=sr,
-                        n_fft=N_FFT_DEFAULT,
-                        hop_length=HOP_LENGTH_DEFAULT,
-                        window=WINDOW_DEFAULT,
-                        center=CENTER_DEFAULT,
-                    )
-                    stft_end2 = time.perf_counter()
-                    if timing is not None:
-                        timing.stft += (stft_end2 - stft_start2)
-                except Exception:
-                    stft_end2 = time.perf_counter()
-                    if timing is not None:
-                        timing.stft += (stft_end2 - stft_start2)
-                    raise
-                
-                S_post = _apply_spectral_quantization_to_stft(
-                    S_post,
-                    freqs_post,
-                    key=key,
-                    scale=scale,
-                    snap_strength=snap_strength,
-                    smear=smear,
-                    bin_smoothing=bin_smoothing,
-                    timing=timing,
-                )
-                
-                # =================================================================
-                # SINGLE iSTFT: Final reconstruction from frequency domain
-                # This is the ONLY iSTFT when both pre-quant and post-quant are enabled
-                # =================================================================
-                istft_start = time.perf_counter()
-                try:
-                    x_post_quant = istft_mono(
-                        S_post,
-                        sr=sr,
-                        n_fft=N_FFT_DEFAULT,
-                        hop_length=HOP_LENGTH_DEFAULT,
-                        window=WINDOW_DEFAULT,
-                        length=n_samples,
-                        center=CENTER_DEFAULT,
-                    )
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                except Exception:
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                    raise
-                x_post_quant = x_post_quant.astype(np.float32)
-            else:
-                # Pre-quant was not enabled, so S is still in frequency domain
-                # Apply post-quant directly to S (no second STFT needed)
-                S = _apply_spectral_quantization_to_stft(
-                    S,
-                    freqs,
-                    key=key,
-                    scale=scale,
-                    snap_strength=snap_strength,
-                    smear=smear,
-                    bin_smoothing=bin_smoothing,
-                    timing=timing,
-                )
-                
-                # =================================================================
-                # SINGLE iSTFT: Final reconstruction from frequency domain
-                # =================================================================
-                istft_start = time.perf_counter()
-                try:
-                    x_post_quant = istft_mono(
-                        S,
-                        sr=sr,
-                        n_fft=N_FFT_DEFAULT,
-                        hop_length=HOP_LENGTH_DEFAULT,
-                        window=WINDOW_DEFAULT,
-                        length=n_samples,
-                        center=CENTER_DEFAULT,
-                    )
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                except Exception:
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                    raise
-                x_post_quant = x_post_quant.astype(np.float32)
-        else:
-            # Post-quant not enabled
-            if pre_quant and snap_strength > 0.0:
-                # Pre-quant was applied and already converted to time-domain
-                x_post_quant = x_post_dist.copy()
-            else:
-                # No quantization was applied, convert S to time-domain
-                # =================================================================
-                # SINGLE iSTFT: Final reconstruction from frequency domain
-                # =================================================================
-                istft_start = time.perf_counter()
-                try:
-                    x_post_quant = istft_mono(
-                        S,
-                        sr=sr,
-                        n_fft=N_FFT_DEFAULT,
-                        hop_length=HOP_LENGTH_DEFAULT,
-                        window=WINDOW_DEFAULT,
-                        length=n_samples,
-                        center=CENTER_DEFAULT,
-                    )
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                except Exception:
-                    istft_end = time.perf_counter()
-                    if timing is not None:
-                        timing.istft = (istft_end - istft_start)
-                    raise
-                x_post_quant = x_post_quant.astype(np.float32)
-
-        # --- Stage D: Limiter ---
-        if limiter_on:
-            x_limited, _gain = peak_limiter(
-                x_post_quant,
+            
+            processed_high, taps_high = _process_single_band(
+                high_band,
                 sr=sr,
-                ceiling_db=limiter_ceiling_db,
-                lookahead_ms=5.0,
-                release_ms=30.0,
+                key=key,
+                scale=scale,
+                snap_strength=snap_strength,
+                smear=smear,
+                bin_smoothing=bin_smoothing,
+                pre_quant=pre_quant,
+                post_quant=post_quant,
+                distortion_mode=distortion_mode,
+                distortion_params=distortion_params,
+                limiter_on=limiter_on,
+                limiter_ceiling_db=limiter_ceiling_db,
+                dry_wet=dry_wet,
+                tap_input=high_band,  # Use band-specific input for dry/wet mix
+                timing=timing,
             )
+            
+            # Recombine bands
+            x_out = processed_low + processed_high
+            x_out = x_out.astype(np.float32)
+            
+            # Ensure output length matches input
+            if x_out.shape[0] != n_samples:
+                if x_out.shape[0] > n_samples:
+                    x_out = x_out[:n_samples]
+                else:
+                    pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
+                    x_out = np.concatenate([x_out, pad], axis=0)
+            
+            # For taps, use the full-band input and output
+            # (We drop branch-specific taps for simplicity)
+            taps = {
+                "input": tap_input,
+                "pre_quant": taps_low["pre_quant"] + taps_high["pre_quant"],
+                "post_dist": taps_low["post_dist"] + taps_high["post_dist"],
+                "output": x_out.copy(),
+            }
         else:
-            x_limited = x_post_quant.copy()
-
-        # --- Dry/Wet Mix ---
-        dry_wet = float(np.clip(dry_wet, 0.0, 1.0))
-        x_out = (dry_wet * x_limited) + ((1.0 - dry_wet) * tap_input)
-        x_out = x_out.astype(np.float32)
-
-        # Ensure output length matches input
-        if x_out.shape[0] != n_samples:
-            if x_out.shape[0] > n_samples:
-                x_out = x_out[:n_samples]
-            else:
-                pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
-                x_out = np.concatenate([x_out, pad], axis=0)
-
-        tap_output = x_out.copy()
-
-        taps = {
-            "input": tap_input,
-            "pre_quant": tap_pre_quant,
-            "post_dist": tap_post_dist,
-            "output": tap_output,
-        }
+            # Single-band processing (original behavior)
+            x_out, taps_band = _process_single_band(
+                x_in,
+                sr=sr,
+                key=key,
+                scale=scale,
+                snap_strength=snap_strength,
+                smear=smear,
+                bin_smoothing=bin_smoothing,
+                pre_quant=pre_quant,
+                post_quant=post_quant,
+                distortion_mode=distortion_mode,
+                distortion_params=distortion_params,
+                limiter_on=limiter_on,
+                limiter_ceiling_db=limiter_ceiling_db,
+                dry_wet=dry_wet,
+                tap_input=tap_input,
+                timing=timing,
+            )
+            
+            # Add input tap to match expected structure
+            taps = {
+                "input": tap_input,
+                **taps_band,
+            }
         
         total_end = time.perf_counter()
         timing.total = total_end - total_start
