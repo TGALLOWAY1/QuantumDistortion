@@ -28,7 +28,7 @@ from quantum_distortion.dsp.quantizer import quantize_spectrum
 from quantum_distortion.dsp.distortion import apply_distortion
 from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
-from quantum_distortion.dsp.crossover import linkwitz_riley_split
+from quantum_distortion.dsp.crossover import linkwitz_riley_split, estimate_filter_group_delay_samples
 from quantum_distortion.dsp.saturation import soft_tube, make_mono_lowband
 
 
@@ -140,6 +140,80 @@ def _apply_spectral_quantization_to_stft(
     # Reconstruct complex STFT from modified magnitudes and phases
     S_q = mags * np.exp(1j * phases)
     return S_q
+
+
+def _align_branches(
+    low: np.ndarray,
+    high: np.ndarray,
+    filter_delay_samples: int,
+    stft_latency_samples: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Align low and high bands to compensate for latency differences.
+    
+    The high band path goes through STFT processing which has inherent latency
+    (window center offset). The low band path is time-domain only (minimal latency).
+    
+    This function aligns the bands by:
+    - Delaying the low band to match the high band's total latency
+    - Ensuring both outputs have the same length
+    
+    Parameters
+    ----------
+    low : np.ndarray
+        Low band audio (time-domain path).
+    high : np.ndarray
+        High band audio (will go through STFT path).
+    filter_delay_samples : int
+        Estimated group delay from the crossover filters (affects both bands).
+    stft_latency_samples : int
+        Additional latency from STFT processing (affects high band only).
+    
+    Returns
+    -------
+    low_aligned : np.ndarray
+        Aligned low band (delayed to match high band latency).
+    high_aligned : np.ndarray
+        High band (unchanged, but may be trimmed to match length).
+    """
+    # Total latency for high band: filter delay + STFT latency
+    high_total_latency = filter_delay_samples + stft_latency_samples
+    
+    # Total latency for low band: filter delay only (time-domain processing is minimal)
+    low_total_latency = filter_delay_samples
+    
+    # Delay difference: how much we need to delay the low band
+    delay_diff = high_total_latency - low_total_latency
+    
+    # Align low band by adding delay (zero-padding at the start)
+    if delay_diff > 0:
+        # Low band is faster, delay it
+        if low.ndim == 1:
+            # Mono
+            low_aligned = np.concatenate([
+                np.zeros(delay_diff, dtype=low.dtype),
+                low
+            ])
+        else:
+            # Multi-channel
+            n_channels = low.shape[1]
+            padding = np.zeros((delay_diff, n_channels), dtype=low.dtype)
+            low_aligned = np.concatenate([padding, low], axis=0)
+    else:
+        # Low band is slower or same, no delay needed
+        low_aligned = low.copy()
+    
+    # Ensure both have the same length (trim to minimum)
+    min_length = min(low_aligned.shape[0], high.shape[0])
+    
+    if low_aligned.ndim == 1:
+        low_aligned = low_aligned[:min_length]
+        high_aligned = high[:min_length]
+    else:
+        low_aligned = low_aligned[:min_length, :]
+        high_aligned = high[:min_length, :]
+    
+    return low_aligned, high_aligned
 
 
 def _process_single_band(
@@ -548,14 +622,27 @@ def process_audio(
             # Split into low and high bands using Linkwitz-Riley crossover
             low_band, high_band = linkwitz_riley_split(x_in, sr, crossover_hz)
             
+            # Estimate latency for alignment
+            filter_delay_samples = estimate_filter_group_delay_samples(sr, crossover_hz)
+            # STFT latency: when center=True, the window is centered, adding n_fft/2 samples of delay
+            stft_latency_samples = N_FFT_DEFAULT // 2
+            
+            # Align branches to compensate for latency differences
+            low_aligned, high_aligned = _align_branches(
+                low_band,
+                high_band,
+                filter_delay_samples,
+                stft_latency_samples,
+            )
+            
             # Low band path: time-domain only (mono-maker + saturation)
             # This keeps bass frequencies in the time domain for better transient response
-            low_processed = make_mono_lowband(soft_tube(low_band, drive=lowband_drive))
+            low_processed = make_mono_lowband(soft_tube(low_aligned, drive=lowband_drive))
             low_processed = low_processed.astype(np.float32)
             
             # High band path: full STFT pipeline (spectral quantization, etc.)
             processed_high, taps_high = _process_single_band(
-                high_band,
+                high_aligned,
                 sr=sr,
                 key=key,
                 scale=scale,
@@ -569,7 +656,7 @@ def process_audio(
                 limiter_on=limiter_on,
                 limiter_ceiling_db=limiter_ceiling_db,
                 dry_wet=dry_wet,
-                tap_input=high_band,  # Use band-specific input for dry/wet mix
+                tap_input=high_aligned,  # Use band-specific input for dry/wet mix
                 timing=timing,
             )
             

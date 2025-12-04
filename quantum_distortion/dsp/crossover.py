@@ -117,3 +117,52 @@ def linkwitz_riley_split(
     
     return low_band, high_band
 
+
+def estimate_filter_group_delay_samples(sr: int, crossover_hz: float) -> int:
+    """
+    Rough estimate of group delay (in samples) for the Linkwitz-Riley crossover.
+    
+    For a 4th-order Linkwitz-Riley crossover (2 cascaded 2nd-order Butterworth filters),
+    the group delay is highest near the crossover frequency. This function provides
+    a simple heuristic estimate.
+    
+    The estimate is based on:
+    - Filter order (4th order = 2 cascaded 2nd order)
+    - Crossover frequency
+    - Sample rate
+    
+    This is approximate; the goal is to get the low and high bands close enough
+    that obvious misalignment disappears.
+    
+    Parameters
+    ----------
+    sr : int
+        Sample rate in Hz.
+    crossover_hz : float
+        Crossover frequency in Hz.
+    
+    Returns
+    -------
+    int
+        Estimated group delay in samples.
+    """
+    # For a Butterworth filter, group delay at cutoff ≈ N / (2π * fc)
+    # where N is the filter order. For a 4th-order filter (2 cascaded 2nd-order),
+    # we approximate the delay as:
+    # delay_seconds ≈ (4 / (2π * fc)) * scaling_factor
+    # 
+    # The scaling factor accounts for the cascaded structure and provides
+    # a conservative estimate.
+    order = 4  # 4th-order Linkwitz-Riley
+    scaling_factor = 1.2  # Conservative scaling for cascaded filters
+    
+    if crossover_hz <= 0.0:
+        return 0
+    
+    # Calculate delay in seconds, then convert to samples
+    delay_seconds = (order / (2.0 * np.pi * crossover_hz)) * scaling_factor
+    delay_samples = int(delay_seconds * sr)
+    
+    # Ensure at least 1 sample delay (filters always have some delay)
+    return max(1, delay_samples)
+
