@@ -153,6 +153,57 @@ Several test files contain helper functions for generating test signals:
 
 This test serves as a good reference for building a test harness around `process_audio`.
 
+## Processing Harness
+
+### `process_file_to_file`
+
+**Location**: `quantum_distortion/dsp/harness.py`
+
+**Function Signature**:
+```python
+def process_file_to_file(
+    infile: Path,
+    outfile: Path,
+    preset: Optional[str] = None,
+    extra_params: Optional[Dict[str, Any]] = None,
+) -> None
+```
+
+**Description**: Convenience wrapper that loads audio, processes it through `process_audio`, and saves the result. This is the convenience layer used by automated regression tests and scripts that need simple file-to-file processing.
+
+**Features**:
+- Supports preset-based processing (loads configuration from `quantum_distortion.presets`)
+- Supports default parameters (if no preset is specified)
+- Supports parameter overrides via `extra_params`
+- Handles audio loading, mono conversion, processing, and saving
+- Discards tap buffers (focuses on final output only)
+
+**Usage Example**:
+```python
+from pathlib import Path
+from quantum_distortion.dsp.harness import process_file_to_file
+
+# Process with default parameters
+process_file_to_file(
+    Path("input.wav"),
+    Path("output.wav")
+)
+
+# Process with a preset
+process_file_to_file(
+    Path("input.wav"),
+    Path("output.wav"),
+    preset="my_preset"
+)
+
+# Process with parameter overrides
+process_file_to_file(
+    Path("input.wav"),
+    Path("output.wav"),
+    extra_params={"snap_strength": 0.5, "dry_wet": 0.8}
+)
+```
+
 ## STFT Utilities
 
 **Location**: `quantum_distortion/dsp/stft_utils.py`
