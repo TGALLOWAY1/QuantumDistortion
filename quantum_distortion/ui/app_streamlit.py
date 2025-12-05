@@ -1013,7 +1013,16 @@ def render_v2_ui() -> None:
 
 def main() -> None:
     """Main entry point that routes to V1 or V2 UI based on feature flag."""
-    if USE_V2_UI:
+    # Dev-only sidebar toggle (overrides environment variable when app is running)
+    # This allows easy switching during development without restarting
+    # Environment variable QD_USE_V2_UI sets the default, but sidebar can override
+    use_v2_ui = st.sidebar.checkbox(
+        "Use V2 UI (dev)",
+        value=USE_V2_UI,
+        help="Toggle between V1 (MVP) and V2 (new layout) interfaces. Default from QD_USE_V2_UI env var.",
+    )
+    
+    if use_v2_ui:
         render_v2_ui()
     else:
         render_v1_ui()
