@@ -24,6 +24,7 @@ The app uses a single-page layout with 5 main panels:
 from __future__ import annotations
 
 
+import os
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -34,6 +35,10 @@ from typing import Dict
 project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
+
+
+# Feature flag for V2 UI (can be overridden via environment variable)
+USE_V2_UI = os.getenv("QD_USE_V2_UI", "true").lower() in ("true", "1", "yes")
 
 
 import numpy as np
@@ -80,7 +85,8 @@ def _init_session_state() -> None:
         st.session_state["loaded_file_name"] = None  # str | None
 
 
-def main() -> None:
+def render_v1_ui() -> None:
+    """Render the original MVP slider-based UI layout."""
     st.set_page_config(page_title="Quantum Distortion MVP", layout="wide")
     _init_session_state()
 
@@ -318,6 +324,166 @@ def main() -> None:
                 tap_source=tap_source,  # type: ignore[arg-type]
             )
             st.pyplot(fig, clear_figure=True)
+
+
+def render_v2_ui() -> None:
+    """Render the new V2 single-page layout with signal-flow-based organization."""
+    st.set_page_config(page_title="Quantum Distortion V2", layout="wide")
+    _init_session_state()
+
+    st.title("Quantum Distortion V2")
+    st.caption("Spectral Quantized Distortion · Signal-Flow Based Interface")
+
+    # ===========================
+    # Top Bar — File Upload, Render, Delta Toggle
+    # ===========================
+    with st.container():
+        col_upload, col_render, col_delta = st.columns([3, 2, 1], gap="medium")
+
+        with col_upload:
+            uploaded = st.file_uploader(
+                "Load audio (WAV / AIF / AIFF)",
+                type=["wav", "aif", "aiff"],
+            )
+
+            if uploaded is not None:
+                # Only reload and reset state if the file has actually changed.
+                last_name = st.session_state.get("loaded_file_name", None)
+                if uploaded.name != last_name:
+                    data, sr = sf.read(uploaded, always_2d=False)
+
+                    audio = np.asarray(data, dtype=np.float32)
+                    if audio.ndim == 2:
+                        audio = audio.mean(axis=1).astype(np.float32)
+
+                    st.session_state["audio"] = audio
+                    st.session_state["sr"] = int(sr)
+
+                    # Reset DSP results because we have a new input file
+                    st.session_state["processed"] = None
+                    st.session_state["taps"] = None
+                    st.session_state["loaded_file_name"] = uploaded.name
+
+                    st.success(f"Loaded file — {len(audio)} samples @ {sr} Hz")
+
+        with col_render:
+            st.markdown("<br>", unsafe_allow_html=True)  # Vertical spacing
+            if st.button("Render", type="primary", use_container_width=True):
+                audio = st.session_state.get("audio")
+                sr = st.session_state.get("sr")
+
+                if audio is None or sr is None:
+                    st.error("Please load an audio file first.")
+                else:
+                    # For now, use default parameters from V1 UI
+                    # This will be replaced with V2 controls later
+                    processed, taps = process_audio(
+                        audio=audio,
+                        sr=sr,
+                        # Using default values for now
+                    )
+
+                    st.session_state["processed"] = processed
+                    st.session_state["taps"] = taps
+                    st.success("Processing complete!")
+
+        with col_delta:
+            st.markdown("<br>", unsafe_allow_html=True)  # Vertical spacing
+            listen_to_delta = st.checkbox("Listen to Delta", value=False)
+            # Store in session state for future use
+            st.session_state["listen_to_delta"] = listen_to_delta
+
+    # Audio playback section
+    audio = st.session_state.get("audio")
+    sr = st.session_state.get("sr")
+    processed = st.session_state.get("processed")
+
+    if audio is not None and sr is not None:
+        col_orig, col_proc = st.columns(2, gap="medium")
+        with col_orig:
+            st.markdown("**Original Audio**")
+            st.audio(_audio_to_wav_bytes(audio, sr), format="audio/wav")
+        with col_proc:
+            if processed is not None:
+                st.markdown("**Processed Audio**")
+                st.audio(_audio_to_wav_bytes(processed, sr), format="audio/wav")
+                dl_bytes = _audio_to_wav_bytes(processed, sr)
+                st.download_button(
+                    "Download Processed WAV",
+                    data=dl_bytes,
+                    file_name="quantum_distortion_processed.wav",
+                    mime="audio/wav",
+                )
+            else:
+                st.info("Click Render to process audio.")
+
+    st.markdown("---")
+
+    # ===========================
+    # Signal Flow Overview
+    # ===========================
+    with st.container():
+        st.subheader("Signal Flow Overview")
+        st.info("Coming soon: interactive diagram showing Input → Low Band / High Band → Creative Quantum FX → Output")
+
+    st.markdown("---")
+
+    # ===========================
+    # Low Band (Body) Section
+    # ===========================
+    with st.expander("Low Band (Body)", expanded=True):
+        st.write("Low band processing controls will be added here.")
+        st.write("This section will include:")
+        st.write("- Crossover frequency settings")
+        st.write("- Low band drive/saturation")
+        st.write("- Low band-specific quantization")
+        st.write("- Low band visualization")
+
+    # ===========================
+    # High Band (Texture) Section
+    # ===========================
+    with st.expander("High Band (Texture)", expanded=True):
+        st.write("High band processing controls will be added here.")
+        st.write("This section will include:")
+        st.write("- High band drive/saturation")
+        st.write("- High band-specific quantization")
+        st.write("- High band visualization")
+
+    # ===========================
+    # Creative Quantum FX Section
+    # ===========================
+    with st.expander("Creative Quantum FX", expanded=True):
+        st.write("Creative spectral effects controls will be added here.")
+        st.write("This section will include:")
+        st.write("- Quantum FX mode selection")
+        st.write("- FX strength/intensity")
+        st.write("- Spectral manipulation parameters")
+        st.write("- Real-time preview options")
+
+    # ===========================
+    # Analysis Tools Section
+    # ===========================
+    with st.expander("Analysis Tools", expanded=False):
+        st.write("Enhanced analysis and visualization tools will be added here.")
+        st.write("This section will include:")
+        st.write("- Delta visualization (before/after comparison)")
+        st.write("- Spectrogram views")
+        st.write("- Multi-tap comparison")
+        st.write("- Export options")
+
+        # Show basic info if processing has been done
+        processed = st.session_state.get("processed")
+        taps = st.session_state.get("taps")
+        if processed is not None and taps is not None:
+            st.success("Analysis data available. Full visualization tools coming soon.")
+
+
+def main() -> None:
+    """Main entry point that routes to V1 or V2 UI based on feature flag."""
+    if USE_V2_UI:
+        render_v2_ui()
+    else:
+        render_v1_ui()
 
 
 if __name__ == "__main__":
