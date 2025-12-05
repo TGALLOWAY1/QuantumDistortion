@@ -40,6 +40,7 @@ sys.path.insert(0, str(repo_root))
 
 from quantum_distortion.dsp.harness import process_file_to_file
 from tests.utils.audio_test_utils import load_audio, null_test
+from quantum_distortion.dsp.spectral_fx import SPECTRAL_FX_PRESETS
 
 
 # Expected fixture files (minimum set)
@@ -49,6 +50,44 @@ EXPECTED_FIXTURES = [
     "kick_sub_combo.wav",
     "midrange_growl_like.wav",
 ]
+
+# Preset names to test
+PRESET_NAMES = [
+    "sub_safe_glue",
+    "digital_growl",
+    "laser_zap",
+    "grainy_top",
+]
+
+
+class _Config:
+    """Simple config object for applying presets."""
+    def __init__(self):
+        self.distortion_mode = None
+        self.distortion_strength = 0.0
+        self.distortion_params = {}
+
+
+def apply_preset_to_cfg(cfg: _Config, preset_name: str) -> _Config:
+    """
+    Apply a spectral FX preset to a config object.
+    
+    Args:
+        cfg: Config object to modify
+        preset_name: Name of preset from SPECTRAL_FX_PRESETS
+        
+    Returns:
+        Modified config object (same instance)
+    """
+    preset = SPECTRAL_FX_PRESETS[preset_name]
+    cfg.distortion_mode = preset["mode"]
+    cfg.distortion_strength = preset["distortion_strength"]
+    # Allow cfg.distortion_params to exist already, but overwrite with preset params
+    existing_params = getattr(cfg, "distortion_params", {}) or {}
+    preset_params = preset.get("params", {})
+    cfg.distortion_params = dict(existing_params)
+    cfg.distortion_params.update(preset_params)
+    return cfg
 
 
 def main() -> None:
@@ -146,7 +185,52 @@ def main() -> None:
 
             results.append((fixture_name, residual_single, residual_multi))
 
-            # Process spectral FX variants
+            # Process spectral FX presets
+            print(f"\n=== Testing Presets for {fixture_name} ===")
+            
+            for preset_name in PRESET_NAMES:
+                try:
+                    # Create config and apply preset
+                    cfg = _Config()
+                    apply_preset_to_cfg(cfg, preset_name)
+                    
+                    # Build output path
+                    output_preset_name = fixture_path.stem + f"_preset_{preset_name}.wav"
+                    output_preset_path = processed_dir / output_preset_name
+                    
+                    print(f"  [{preset_name}] -> {output_preset_name}...", end=" ", flush=True)
+                    
+                    # Render with preset
+                    process_file_to_file(
+                        fixture_path,
+                        output_preset_path,
+                        preset=args.preset,
+                        extra_params={
+                            "use_multiband": True,
+                            "crossover_hz": 300.0,
+                            "spectral_fx_mode": cfg.distortion_mode,
+                            "spectral_fx_strength": cfg.distortion_strength,
+                            "spectral_fx_params": cfg.distortion_params,
+                        },
+                    )
+                    print(f"done")
+                    
+                    # Load preset-processed version
+                    processed_preset, _ = load_audio(output_preset_path)
+                    
+                    # Compute residual vs baseline
+                    residual_vs_baseline = null_test(processed_multi_baseline, processed_preset)
+                    
+                    spectral_fx_results.append((fixture_name, preset_name, residual_vs_baseline))
+                    print(f"    residual_rms_db={residual_vs_baseline:.2f} dB")
+                    
+                except Exception as e:
+                    print(f"ERROR: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    spectral_fx_results.append((fixture_name, preset_name, None))
+            
+            # Also process raw spectral FX variants (for comparison)
             spectral_fx_modes = ["bitcrush", "phase_dispersal", "bin_scramble"]
             fx_strength = 0.5
             
@@ -207,11 +291,17 @@ def main() -> None:
         print("(Residual RMS in dB: FX-processed vs baseline multiband render)")
         print()
         
+        # Group by fixture for better readability
+        fixtures_seen = set()
         for fixture_name, fx_mode, residual_vs_baseline in spectral_fx_results:
+            if fixture_name not in fixtures_seen:
+                fixtures_seen.add(fixture_name)
+                print(f"\nFixture: {fixture_name}")
+            
             if residual_vs_baseline is not None:
-                print(f"fixture={fixture_name:25s} fx={fx_mode:15s} residual_vs_baseline={residual_vs_baseline:7.2f} dB")
+                print(f"  [{fx_mode:20s}] residual_vs_baseline={residual_vs_baseline:7.2f} dB")
             else:
-                print(f"fixture={fixture_name:25s} fx={fx_mode:15s} ERROR")
+                print(f"  [{fx_mode:20s}] ERROR")
         
         print("=" * 80)
         print()
