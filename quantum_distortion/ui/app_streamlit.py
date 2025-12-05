@@ -407,6 +407,57 @@ def render_v2_ui() -> None:
                     if output_trim_db != 0:
                         st.warning(f"Low band output trim ({output_trim_db} dB) not yet implemented in DSP.")
                     
+                    # Get High Band settings
+                    high_band_settings = st.session_state.get("high_band_settings", {})
+                    fft_size = high_band_settings.get("fft_size", 2048)
+                    window_type = high_band_settings.get("window_type", "hann")
+                    precision_mode = high_band_settings.get("precision_mode", "Quantized")
+                    mag_decimation = high_band_settings.get("mag_decimation", 0.5)
+                    phase_dispersal = high_band_settings.get("phase_dispersal", 0.3)
+                    bin_scrambling = high_band_settings.get("bin_scrambling", 0.2)
+                    high_output_trim_db = high_band_settings.get("output_trim_db", 0)
+                    
+                    # TODO: Wire fft_size to DSP
+                    # Currently N_FFT_DEFAULT = 2048 is hardcoded in pipeline.py
+                    # Need to add n_fft parameter to process_audio() and pass through to stft_mono()
+                    if fft_size != 2048:
+                        st.warning(f"FFT size {fft_size} not yet implemented in DSP. Using default 2048.")
+                    
+                    # TODO: Wire window_type to DSP
+                    # Currently WINDOW_DEFAULT = "hann" is hardcoded and enforced
+                    # Need to support blackmanharris window in stft_utils.py and pipeline
+                    if window_type != "hann":
+                        st.warning(f"Window type '{window_type}' not yet implemented in DSP. Using Hann window.")
+                    
+                    # TODO: Wire precision_mode to DSP
+                    # "Clean" = no quantization, "Quantized" = normal quantization, "Brutal" = aggressive quantization
+                    # Need to map this to quantization parameters (snap_strength, smear, etc.)
+                    if precision_mode != "Quantized":
+                        st.info(f"Precision mode '{precision_mode}' not yet implemented. Using default quantization.")
+                    
+                    # Determine which spectral FX to apply based on non-zero values
+                    # Priority: bin_scramble > phase_dispersal > bitcrush (magnitude decimation)
+                    spectral_fx_mode = None
+                    spectral_fx_strength = 0.0
+                    spectral_fx_params = {}
+                    
+                    if bin_scrambling > 0.0:
+                        spectral_fx_mode = "bin_scramble"
+                        spectral_fx_strength = bin_scrambling
+                        # bin_scramble params can be customized here if needed
+                    elif phase_dispersal > 0.0:
+                        spectral_fx_mode = "phase_dispersal"
+                        spectral_fx_strength = phase_dispersal
+                    elif mag_decimation > 0.0:
+                        spectral_fx_mode = "bitcrush"
+                        spectral_fx_strength = mag_decimation
+                    
+                    # TODO: Wire high_output_trim_db to DSP
+                    # Currently no per-band output trim in pipeline
+                    # Need to add gain stage after high band processing
+                    if high_output_trim_db != 0:
+                        st.warning(f"High band output trim ({high_output_trim_db} dB) not yet implemented in DSP.")
+                    
                     # Process with multiband enabled
                     processed, taps = process_audio(
                         audio=audio,
@@ -414,8 +465,11 @@ def render_v2_ui() -> None:
                         use_multiband=True,
                         crossover_hz=float(crossover_freq),
                         lowband_drive=float(lowband_drive),
-                        # Using default values for other parameters for now
-                        # TODO: Wire High Band settings when that panel is implemented
+                        spectral_fx_mode=spectral_fx_mode,
+                        spectral_fx_strength=float(spectral_fx_strength),
+                        spectral_fx_params=spectral_fx_params if spectral_fx_params else None,
+                        # Using default values for quantization parameters for now
+                        # TODO: Wire precision_mode to quantization settings
                     )
                     
                     # TODO: Apply low_output_trim_db gain if implemented
@@ -678,11 +732,107 @@ def render_v2_ui() -> None:
         st.session_state["highlight_high_band"] = False  # Clear flag after showing
     
     with st.expander("High Band (Texture)", expanded=True):
-        st.write("High band processing controls will be added here.")
-        st.write("This section will include:")
-        st.write("- High band drive/saturation")
-        st.write("- High band-specific quantization")
-        st.write("- High band visualization")
+        # Initialize high band settings in session state if not present
+        if "high_band_settings" not in st.session_state:
+            st.session_state["high_band_settings"] = {
+                "fft_size": 2048,
+                "window_type": "hann",
+                "precision_mode": "Quantized",
+                "mag_decimation": 0.5,
+                "phase_dispersal": 0.3,
+                "bin_scrambling": 0.2,
+                "output_trim_db": 0,
+            }
+        
+        # Get current settings
+        settings = st.session_state["high_band_settings"]
+        
+        # Controls layout
+        col_controls, col_viz = st.columns([2, 1], gap="medium")
+        
+        with col_controls:
+            # STFT Settings
+            st.markdown("**STFT Settings**")
+            fft_options = [512, 1024, 2048, 4096]
+            current_fft = settings.get("fft_size", 2048)
+            fft_index = fft_options.index(current_fft) if current_fft in fft_options else 2
+            fft_size = st.selectbox(
+                "FFT Size",
+                fft_options,
+                index=fft_index,
+            )
+            settings["fft_size"] = fft_size
+            
+            window_type = st.selectbox(
+                "Window Type",
+                ["hann", "blackmanharris"],
+                index=0 if settings.get("window_type", "hann") == "hann" else 1,
+            )
+            settings["window_type"] = window_type
+            
+            precision_options = ["Clean", "Quantized", "Brutal"]
+            current_precision = settings.get("precision_mode", "Quantized")
+            precision_index = precision_options.index(current_precision) if current_precision in precision_options else 1
+            precision_mode = st.selectbox(
+                "Precision Mode",
+                precision_options,
+                index=precision_index,
+            )
+            settings["precision_mode"] = precision_mode
+            
+            st.markdown("---")
+            
+            # Spectral Distortion
+            st.markdown("**Spectral Distortion**")
+            mag_decimation = st.slider(
+                "Magnitude Decimation",
+                min_value=0.0,
+                max_value=1.0,
+                value=settings.get("mag_decimation", 0.5),
+                step=0.05,
+            )
+            settings["mag_decimation"] = mag_decimation
+            
+            phase_dispersal = st.slider(
+                "Phase Dispersal",
+                min_value=0.0,
+                max_value=1.0,
+                value=settings.get("phase_dispersal", 0.3),
+                step=0.05,
+            )
+            settings["phase_dispersal"] = phase_dispersal
+            
+            bin_scrambling = st.slider(
+                "Bin Scrambling Intensity",
+                min_value=0.0,
+                max_value=1.0,
+                value=settings.get("bin_scrambling", 0.2),
+                step=0.05,
+            )
+            settings["bin_scrambling"] = bin_scrambling
+            
+            high_output_trim_db = st.slider(
+                "High Band Output Trim (dB)",
+                min_value=-12,
+                max_value=12,
+                value=settings.get("output_trim_db", 0),
+                step=1,
+            )
+            settings["output_trim_db"] = high_output_trim_db
+            
+            # Update session state
+            st.session_state["high_band_settings"] = settings
+        
+        with col_viz:
+            st.markdown("**High-Band Spectrogram**")
+            # Placeholder spectrogram visualization
+            # TODO: Feed actual high-band spectrogram array after render
+            processed = st.session_state.get("processed")
+            if processed is not None:
+                st.info("High-band spectrogram (will update after render)")
+                # Future: display actual spectrogram using stft data from taps
+            else:
+                st.info("Render audio to see high-band spectrogram")
 
     # ===========================
     # Creative Quantum FX Section
