@@ -62,3 +62,55 @@ def test_pipeline_neutral_settings_approx_passthrough() -> None:
     # Allow small numerical differences due to float ops
     assert np.allclose(y, x, atol=1e-3)
 
+
+def _make_sweep(sr: int = 44100, seconds: float = 0.2) -> Tuple[np.ndarray, int]:
+    """Create a simple sine sweep for testing."""
+    t = np.linspace(0.0, seconds, int(sr * seconds), endpoint=False)
+    # Sweep from 440 Hz to 880 Hz
+    freq = 440.0 + (440.0 * t / seconds)
+    x = 0.1 * np.sin(2.0 * np.pi * freq * t).astype(np.float32)
+    return x, sr
+
+
+def test_spectral_fx_integration() -> None:
+    """Test that spectral FX are integrated into high-band pipeline."""
+    x, sr = _make_sweep(seconds=0.1)  # Short test signal
+    
+    # Baseline: no spectral FX
+    y_baseline, _ = process_audio(
+        x,
+        sr=sr,
+        use_multiband=True,
+        crossover_hz=300.0,
+        snap_strength=0.5,
+        pre_quant=True,
+        post_quant=False,
+        limiter_on=False,
+        spectral_fx_mode=None,
+        spectral_fx_strength=0.0,
+    )
+    
+    # Test each spectral FX mode with small strength
+    modes = ["bitcrush", "phase_dispersal", "bin_scramble"]
+    
+    for mode in modes:
+        y_fx, _ = process_audio(
+            x,
+            sr=sr,
+            use_multiband=True,
+            crossover_hz=300.0,
+            snap_strength=0.5,
+            pre_quant=True,
+            post_quant=False,
+            limiter_on=False,
+            spectral_fx_mode=mode,
+            spectral_fx_strength=0.3,  # Small strength for testing
+        )
+        
+        # Output length should match input
+        assert y_fx.shape == x.shape, f"{mode}: output length mismatch"
+        
+        # RMS difference should be > 0 (effect actually changed audio)
+        rms_diff = np.sqrt(np.mean((y_fx - y_baseline) ** 2))
+        assert rms_diff > 0.0, f"{mode}: no change detected (RMS diff = {rms_diff})"
+
