@@ -161,7 +161,6 @@ def _init_session_state() -> None:
 
 def render_v1_ui() -> None:
     """Render the original MVP slider-based UI layout."""
-    st.set_page_config(page_title="Quantum Distortion MVP", layout="wide")
     _init_session_state()
 
     st.title("Quantum Distortion — MVP Prototype")
@@ -402,7 +401,6 @@ def render_v1_ui() -> None:
 
 def render_v2_ui() -> None:
     """Render the new V2 single-page layout with signal-flow-based organization."""
-    st.set_page_config(page_title="Quantum Distortion V2", layout="wide")
     _init_session_state()
 
     st.title("Quantum Distortion V2")
@@ -1013,6 +1011,9 @@ def render_v2_ui() -> None:
 
 def main() -> None:
     """Main entry point that routes to V1 or V2 UI based on feature flag."""
+    # Set page config first (must be first Streamlit command, before any other Streamlit calls)
+    st.set_page_config(page_title="Quantum Distortion", layout="wide")
+    
     # Dev-only sidebar toggle (overrides environment variable when app is running)
     # This allows easy switching during development without restarting
     # Environment variable QD_USE_V2_UI sets the default, but sidebar can override
