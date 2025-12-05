@@ -458,6 +458,44 @@ def render_v2_ui() -> None:
                     if high_output_trim_db != 0:
                         st.warning(f"High band output trim ({high_output_trim_db} dB) not yet implemented in DSP.")
                     
+                    # Get Creative Quantum FX settings
+                    quantum_fx_settings = st.session_state.get("quantum_fx_settings", {})
+                    spectral_freeze = quantum_fx_settings.get("spectral_freeze", False)
+                    formant_shift = quantum_fx_settings.get("formant_shift", 0)
+                    harmonic_lock_mode = quantum_fx_settings.get("harmonic_lock_mode", "Off")
+                    custom_fundamental_hz = quantum_fx_settings.get("custom_fundamental_hz", None)
+                    
+                    # Map harmonic_lock_mode to fundamental frequency
+                    fundamental_hz = None
+                    if harmonic_lock_mode == "F#1":
+                        fundamental_hz = 46.25  # F#1 in Hz
+                    elif harmonic_lock_mode == "G1":
+                        fundamental_hz = 49.0  # G1 in Hz
+                    elif harmonic_lock_mode == "A#1":
+                        fundamental_hz = 58.27  # A#1 in Hz
+                    elif harmonic_lock_mode == "Custom" and custom_fundamental_hz is not None:
+                        fundamental_hz = float(custom_fundamental_hz)
+                    
+                    # TODO: Wire spectral_freeze to DSP
+                    # Need to implement frame-holding mechanism in STFT processing
+                    # Should freeze the current STFT frame when enabled, creating sustained texture
+                    if spectral_freeze:
+                        st.info("Spectral Freeze: Feature not yet implemented in DSP. Will hold current spectral texture when available.")
+                    
+                    # TODO: Wire formant_shift to DSP
+                    # Need to implement formant shifting in spectral domain
+                    # Should shift formant frequencies (typically 500-3000 Hz range) by percentage
+                    # Positive values shift up (brighter), negative values shift down (warmer)
+                    if formant_shift != 0:
+                        st.info(f"Formant Shift ({formant_shift}%): Feature not yet implemented in DSP. Will shift vocal character when available.")
+                    
+                    # TODO: Wire harmonic_lock_mode/fundamental_hz to DSP
+                    # Need to implement harmonic locking in quantizer
+                    # Should force quantization to lock onto specific fundamental frequency
+                    # This creates strong harmonic foundation for bass design
+                    if fundamental_hz is not None:
+                        st.info(f"Harmonic Locking ({fundamental_hz:.2f} Hz): Feature not yet implemented in DSP. Will lock harmonics when available.")
+                    
                     # Process with multiband enabled
                     processed, taps = process_audio(
                         audio=audio,
@@ -470,6 +508,8 @@ def render_v2_ui() -> None:
                         spectral_fx_params=spectral_fx_params if spectral_fx_params else None,
                         # Using default values for quantization parameters for now
                         # TODO: Wire precision_mode to quantization settings
+                        # TODO: Pass quantum_fx_settings (spectral_freeze, formant_shift, fundamental_hz) to DSP
+                        # These should be applied in the high-band STFT processing path
                     )
                     
                     # TODO: Apply low_output_trim_db gain if implemented
@@ -838,12 +878,73 @@ def render_v2_ui() -> None:
     # Creative Quantum FX Section
     # ===========================
     with st.expander("Creative Quantum FX", expanded=True):
-        st.write("Creative spectral effects controls will be added here.")
-        st.write("This section will include:")
-        st.write("- Quantum FX mode selection")
-        st.write("- FX strength/intensity")
-        st.write("- Spectral manipulation parameters")
-        st.write("- Real-time preview options")
+        # Initialize quantum FX settings in session state if not present
+        if "quantum_fx_settings" not in st.session_state:
+            st.session_state["quantum_fx_settings"] = {
+                "spectral_freeze": False,
+                "formant_shift": 0,
+                "harmonic_lock_mode": "Off",
+                "custom_fundamental_hz": None,
+            }
+        
+        # Get current settings
+        settings = st.session_state["quantum_fx_settings"]
+        
+        # Controls
+        spectral_freeze = st.checkbox(
+            "Spectral Freeze (hold current texture)",
+            value=settings.get("spectral_freeze", False),
+        )
+        settings["spectral_freeze"] = spectral_freeze
+        
+        formant_shift = st.slider(
+            "Formant Shift (%)",
+            min_value=-100,
+            max_value=100,
+            value=settings.get("formant_shift", 0),
+            step=5,
+        )
+        settings["formant_shift"] = formant_shift
+        
+        harmonic_lock_options = ["Off", "F#1", "G1", "A#1", "Custom"]
+        current_lock_mode = settings.get("harmonic_lock_mode", "Off")
+        lock_index = harmonic_lock_options.index(current_lock_mode) if current_lock_mode in harmonic_lock_options else 0
+        harmonic_lock_mode = st.selectbox(
+            "Harmonic Locking",
+            harmonic_lock_options,
+            index=lock_index,
+        )
+        settings["harmonic_lock_mode"] = harmonic_lock_mode
+        
+        # Custom fundamental input (only shown if "Custom" is selected)
+        custom_fundamental_hz = None
+        if harmonic_lock_mode == "Custom":
+            custom_fundamental_hz = st.number_input(
+                "Custom Fundamental (Hz)",
+                min_value=20.0,
+                max_value=2000.0,
+                value=float(settings.get("custom_fundamental_hz", 55.0)),
+                step=1.0,
+            )
+            settings["custom_fundamental_hz"] = custom_fundamental_hz
+        else:
+            settings["custom_fundamental_hz"] = None
+        
+        # Update session state
+        st.session_state["quantum_fx_settings"] = settings
+        
+        # Explanatory text
+        st.markdown("---")
+        st.markdown("""
+        <div style="padding: 10px; background-color: #f9f9f9; border-radius: 5px; font-size: 0.9em;">
+            <p style="margin: 5px 0;"><strong>💡 What do these do?</strong></p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li><strong>Spectral Freeze:</strong> Captures and holds the current spectral texture, creating a sustained "frozen" harmonic character. Perfect for creating evolving pads or glitchy stutter effects.</li>
+                <li><strong>Formant Shift:</strong> Shifts the formant frequencies (vocal character) up or down without changing pitch. Positive values add brightness and presence, negative values add warmth and body.</li>
+                <li><strong>Harmonic Locking:</strong> Forces the spectrum to lock onto specific fundamental frequencies (F#1, G1, A#1, or custom). This creates a strong harmonic foundation, useful for bass design and pitch-stable textures.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
     # ===========================
     # Analysis Tools Section
