@@ -167,5 +167,38 @@ def bin_scramble(
     -------
     mag_out, phase_out : np.ndarray, np.ndarray
     """
-    return mag, phase
+    mag = np.asarray(mag, dtype=float)
+    phase = np.asarray(phase, dtype=float)
+
+    # Validate and clamp window to odd >= 3
+    if window < 2 or window % 2 == 0:
+        window = max(3, window if window % 2 == 1 else window + 1)
+
+    if mode == "random_pick":
+        mag_out = np.zeros_like(mag)
+        half = window // 2
+        for i in range(mag.shape[0]):
+            start = max(0, i - half)
+            end = min(mag.shape[0], i + half + 1)
+            # Choose random index in [start, end)
+            if end > start:
+                idx = np.random.randint(start, end)
+                mag_out[i] = mag[idx]
+            else:
+                mag_out[i] = mag[i]
+    elif mode == "swap":
+        mag_out = mag.copy()
+        for i in range(mag.size - 1):
+            if np.random.rand() < 0.25:
+                # Swap mag_out[i] and mag_out[i+1]
+                mag_out[i], mag_out[i + 1] = mag_out[i + 1], mag_out[i]
+    else:
+        # Unknown mode, return unchanged
+        mag_out = mag.copy()
+
+    # Maintain gross energy
+    scale = np.sum(mag) / (np.sum(mag_out) + 1e-12)
+    mag_out = mag_out * scale
+
+    return mag_out, phase
 

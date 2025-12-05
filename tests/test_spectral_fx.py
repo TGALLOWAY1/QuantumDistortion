@@ -133,3 +133,62 @@ def test_bin_scramble_smoke() -> None:
     assert mag_out.dtype == mag.dtype
     assert phase_out.dtype == phase.dtype
 
+
+def test_bin_scramble_preserves_shape_and_dtype() -> None:
+    """Test that bin_scramble preserves shape and dtype for both modes."""
+    np.random.seed(42)
+    mag = np.random.rand(1024)
+    phase = np.random.rand(1024)
+
+    mag_out1, phase_out1 = bin_scramble(mag, phase, mode="random_pick")
+    mag_out2, phase_out2 = bin_scramble(mag, phase, mode="swap")
+
+    assert mag_out1.shape == mag.shape
+    assert phase_out1.shape == phase.shape
+    assert mag_out1.dtype == mag.dtype
+    assert phase_out1.dtype == phase.dtype
+
+    assert mag_out2.shape == mag.shape
+    assert phase_out2.shape == phase.shape
+    assert mag_out2.dtype == mag.dtype
+    assert phase_out2.dtype == phase.dtype
+
+
+def test_bin_scramble_random_pick_changes_spectrum() -> None:
+    """Test that random_pick mode changes the spectrum."""
+    np.random.seed(42)
+    # Deterministic mag ramp
+    mag = np.linspace(0.0, 1.0, 1024)
+    phase = np.zeros_like(mag)
+
+    mag_out, phase_out = bin_scramble(mag, phase, mode="random_pick")
+
+    # Spectrum should have changed
+    assert np.any(mag_out != mag)
+
+    # Total energy should be within ±5% of original
+    energy_ratio = np.sum(mag_out) / np.sum(mag)
+    assert 0.95 <= energy_ratio <= 1.05
+
+
+def test_bin_scramble_swap_mode_is_reasonable() -> None:
+    """Test that swap mode preserves values but changes ordering."""
+    np.random.seed(42)
+    # Known pattern
+    mag = np.arange(100, dtype=float)
+    phase = np.zeros_like(mag)
+
+    mag_out, phase_out = bin_scramble(mag, phase, mode="swap")
+
+    # The set of values (before scaling) should be unchanged
+    # Since we rescale, check that the multiset of values is preserved
+    # by comparing sorted arrays (normalized by their sums)
+    mag_normalized = np.sort(mag) / np.sum(mag)
+    mag_out_normalized = np.sort(mag_out) / np.sum(mag_out)
+    # After normalization and sorting, they should be very close
+    assert np.allclose(mag_normalized, mag_out_normalized, rtol=1e-6)
+
+    # But ordering should have changed for at least some indices
+    # Check that at least some adjacent pairs differ from input
+    assert np.any(mag_out != mag)
+
