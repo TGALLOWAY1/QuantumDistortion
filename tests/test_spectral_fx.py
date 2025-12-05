@@ -4,6 +4,7 @@ from quantum_distortion.dsp.spectral_fx import (
     bitcrush,
     phase_dispersal,
     bin_scramble,
+    SPECTRAL_FX_PRESETS,
 )
 
 
@@ -191,4 +192,31 @@ def test_bin_scramble_swap_mode_is_reasonable() -> None:
     # But ordering should have changed for at least some indices
     # Check that at least some adjacent pairs differ from input
     assert np.any(mag_out != mag)
+
+
+def test_spectral_fx_presets_are_well_formed() -> None:
+    """Test that spectral FX presets are well-formed."""
+    # Presets should be non-empty
+    assert len(SPECTRAL_FX_PRESETS) > 0
+    
+    # Each preset should have required keys
+    for preset_name, preset in SPECTRAL_FX_PRESETS.items():
+        assert "mode" in preset, f"Preset '{preset_name}' missing 'mode' key"
+        assert "distortion_strength" in preset, f"Preset '{preset_name}' missing 'distortion_strength' key"
+        
+        # Mode should be one of the valid modes
+        assert preset["mode"] in ["bitcrush", "phase_dispersal", "bin_scramble"], \
+            f"Preset '{preset_name}' has invalid mode: {preset['mode']}"
+        
+        # Distortion strength should be in valid range
+        strength = preset["distortion_strength"]
+        assert isinstance(strength, (int, float)), \
+            f"Preset '{preset_name}' distortion_strength must be numeric"
+        assert 0.0 <= strength <= 1.0, \
+            f"Preset '{preset_name}' distortion_strength {strength} not in [0.0, 1.0]"
+        
+        # Params should be a dict if present
+        if "params" in preset:
+            assert isinstance(preset["params"], dict), \
+                f"Preset '{preset_name}' params must be a dict"
 

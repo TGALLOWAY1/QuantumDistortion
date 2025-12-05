@@ -5,11 +5,112 @@ This module provides spectral effects that operate on magnitude and phase
 spectra, including bitcrush, phase dispersal, and bin scrambling. These
 effects are designed to be applied to the high-band STFT in the quantum
 distortion pipeline.
+
+Design Philosophy:
+------------------
+These FX operate on high-band STFT only (not low band). This design allows
+the low band to stay tight and clean while the high band gets "quantum"
+texture. This is particularly useful for:
+
+- Dubstep / Neuro bass: Keep sub frequencies clean and punchy while adding
+  grit and movement to the mid/high frequencies
+- Drum & Bass: Maintain tight low-end while adding creative texture to
+  high-frequency content
+- General bass processing: Preserve low-end clarity while adding spectral
+  interest to the upper frequencies
+
+The multiband architecture ensures that bass frequencies remain untouched,
+preventing muddiness and phase issues in the critical low-end range.
 """
 
 from __future__ import annotations
 
 import numpy as np
+
+
+# Preset definitions for common bass/FX use-cases.
+# These are intentionally simple dictionaries so they can
+# be surfaced in a UI or config later.
+SPECTRAL_FX_PRESETS: dict[str, dict] = {
+    "sub_safe_glue": {
+        "mode": "bitcrush",
+        "distortion_strength": 0.35,
+        "params": {
+            "method": "log",
+            "step_db": 2.0,
+            "threshold": 0.0,
+        },
+        "description": "Sub-safe subtle log-domain bitcrush for main bass growls.",
+    },
+    "digital_growl": {
+        "mode": "bitcrush",
+        "distortion_strength": 0.55,
+        "params": {
+            "method": "log",
+            "step_db": 3.0,
+            # threshold is computed dynamically from mag.max() if omitted
+        },
+        "description": "More obvious digital grit for aggressive growls.",
+    },
+    "hard_crush_fx": {
+        "mode": "bitcrush",
+        "distortion_strength": 0.8,
+        "params": {
+            "method": "uniform",
+            "step": 0.07,
+            # threshold often pushes small bins to zero
+        },
+        "description": "Heavy bitcrush for stabs and FX, not main bass.",
+    },
+    "gentle_movement": {
+        "mode": "phase_dispersal",
+        "distortion_strength": 0.25,
+        "params": {
+            "randomized": False,
+        },
+        "description": "Small phase rotation for subtle shimmer.",
+    },
+    "laser_zap": {
+        "mode": "phase_dispersal",
+        "distortion_strength": 0.6,
+        "params": {
+            "randomized": True,
+        },
+        "description": "Laser/zap phase dispersal for neuro-style tops.",
+    },
+    "phase_chaos_fx": {
+        "mode": "phase_dispersal",
+        "distortion_strength": 0.9,
+        "params": {
+            "randomized": True,
+        },
+        "description": "Extreme phase chaos for risers and FX beds.",
+    },
+    "stereo_smear": {
+        "mode": "bin_scramble",
+        "distortion_strength": 0.3,
+        "params": {
+            "mode": "swap",
+        },
+        "description": "Subtle local swaps for smeared high-end texture.",
+    },
+    "grainy_top": {
+        "mode": "bin_scramble",
+        "distortion_strength": 0.55,
+        "params": {
+            "mode": "random_pick",
+        },
+        "description": "Noticeable granular smear on the high band.",
+    },
+    "granular_shred": {
+        "mode": "bin_scramble",
+        "distortion_strength": 0.85,
+        "params": {
+            "mode": "random_pick",
+        },
+        "description": "Heavily shredded high band for FX-only usage.",
+    },
+}
 
 
 def bitcrush(
