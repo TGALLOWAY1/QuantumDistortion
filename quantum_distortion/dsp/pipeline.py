@@ -33,6 +33,99 @@ from quantum_distortion.dsp.saturation import soft_tube, make_mono_lowband
 from quantum_distortion.dsp import spectral_fx
 
 
+class _SpectralFXConfig:
+    """Simple config object for spectral FX parameters."""
+    def __init__(
+        self,
+        distortion_mode: Union[str, None] = None,
+        distortion_strength: float = 0.0,
+        distortion_params: Union[Dict[str, Any], None] = None,
+    ):
+        self.distortion_mode = distortion_mode
+        self.distortion_strength = distortion_strength
+        self.distortion_params = distortion_params or {}
+
+
+def apply_spectral_fx(
+    mag: np.ndarray,
+    phase: np.ndarray,
+    cfg: _SpectralFXConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Map high-level distortion settings from the config into concrete
+    spectral FX parameters and apply them to a single STFT frame.
+
+    This is designed for the HIGH-BAND path only. The low band should
+    bypass these FX completely to preserve punch and phase coherence.
+    """
+    mode = getattr(cfg, "distortion_mode", None)
+    s = float(getattr(cfg, "distortion_strength", 0.0))
+    params = getattr(cfg, "distortion_params", {}) or {}
+
+    if not mode or s <= 0.0:
+        return mag, phase
+
+    if mode == "bitcrush":
+        method = params.get("method", "log")
+        # Smoothly ramp from subtle to aggressive in dB space.
+        step_db = params.get("step_db", 0.5 + 7.5 * (s ** 1.3))
+        step = params.get("step", 0.01 + 0.09 * (s ** 1.2))
+        threshold = params.get("threshold", None)
+        if threshold is None and s >= 0.4:
+            threshold = 0.02 * (s ** 1.5) * float(mag.max() if mag.size else 1.0)
+
+        return spectral_fx.bitcrush(
+            mag,
+            phase,
+            method=method,
+            step=step,
+            step_db=step_db,
+            threshold=threshold,
+        )
+
+    if mode == "phase_dispersal":
+        # Nonlinear mapping so small s is quite gentle.
+        amount = params.get("amount", (s ** 1.7) * np.pi)
+        # Only rotate louder bins by default.
+        thresh_default = 0.01 * float(mag.max() if mag.size else 1.0)
+        thresh = params.get("thresh", thresh_default)
+        randomized = params.get("randomized", s > 0.35)
+        rand_amt = params.get(
+            "rand_amt",
+            (0.0 if not randomized else 0.2 * (s ** 1.3) * np.pi),
+        )
+        return spectral_fx.phase_dispersal(
+            mag,
+            phase,
+            thresh=thresh,
+            amount=amount,
+            randomized=randomized,
+            rand_amt=rand_amt,
+        )
+
+    if mode == "bin_scramble":
+        base_window = params.get("window", None)
+        if base_window is None:
+            # 3 → 15 as strength increases, using a gentle curve.
+            base_window = int(3 + (12 * (s ** 1.2)))
+        if base_window < 3:
+            base_window = 3
+        if base_window % 2 == 0:
+            base_window += 1
+
+        mode_name = params.get("mode", "swap" if s < 0.4 else "random_pick")
+
+        return spectral_fx.bin_scramble(
+            mag,
+            phase,
+            window=base_window,
+            mode=mode_name,
+        )
+
+    # Unknown mode → no-op
+    return mag, phase
+
+
 # OLA-Compliant STFT Configuration
 # The STFT/ISTFT functions in stft_utils.py enforce strict OLA architecture:
 # - hop_length is always n_fft // 4 (75% overlap) - enforced by OLA requirements
@@ -119,41 +212,13 @@ def _apply_spectral_quantization_to_stft(
             frame_phases = phases[:, t]
 
             # Apply spectral FX before quantization (only for high-band)
-            if is_high_band and spectral_fx_mode is not None and spectral_fx_strength > 0.0:
-                if spectral_fx_mode == "bitcrush":
-                    step = 0.02 * (1.0 + 3.0 * spectral_fx_strength)
-                    step_db = 1.5 + 6.0 * spectral_fx_strength
-                    threshold = spectral_fx_params.get("threshold", None) if spectral_fx_params else None
-                    frame_mags, frame_phases = spectral_fx.bitcrush(
-                        frame_mags,
-                        frame_phases,
-                        method=spectral_fx_params.get("method", "uniform") if spectral_fx_params else "uniform",
-                        step=step,
-                        step_db=step_db,
-                        threshold=threshold,
-                    )
-                elif spectral_fx_mode == "phase_dispersal":
-                    base_amount = np.pi * spectral_fx_strength
-                    thresh = spectral_fx_params.get("thresh", 0.01) if spectral_fx_params else 0.01
-                    randomized = spectral_fx_params.get("randomized", True) if spectral_fx_params else True
-                    rand_amt = spectral_fx_params.get("rand_amt", 0.3 * spectral_fx_strength) if spectral_fx_params else 0.3 * spectral_fx_strength
-                    frame_mags, frame_phases = spectral_fx.phase_dispersal(
-                        frame_mags,
-                        frame_phases,
-                        thresh=thresh,
-                        amount=base_amount,
-                        randomized=randomized,
-                        rand_amt=rand_amt,
-                    )
-                elif spectral_fx_mode == "bin_scramble":
-                    window = spectral_fx_params.get("window", 5) if spectral_fx_params else 5
-                    mode = spectral_fx_params.get("mode", "random_pick") if spectral_fx_params else "random_pick"
-                    frame_mags, frame_phases = spectral_fx.bin_scramble(
-                        frame_mags,
-                        frame_phases,
-                        window=window,
-                        mode=mode,
-                    )
+            if is_high_band:
+                cfg = _SpectralFXConfig(
+                    distortion_mode=spectral_fx_mode,
+                    distortion_strength=spectral_fx_strength,
+                    distortion_params=spectral_fx_params,
+                )
+                frame_mags, frame_phases = apply_spectral_fx(frame_mags, frame_phases, cfg)
 
             new_mags, new_phases = quantize_spectrum(
                 mags=frame_mags,

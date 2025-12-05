@@ -114,3 +114,33 @@ def test_spectral_fx_integration() -> None:
         rms_diff = np.sqrt(np.mean((y_fx - y_baseline) ** 2))
         assert rms_diff > 0.0, f"{mode}: no change detected (RMS diff = {rms_diff})"
 
+
+def test_apply_spectral_fx_helper() -> None:
+    """Test the apply_spectral_fx helper function."""
+    from quantum_distortion.dsp.pipeline import apply_spectral_fx, _SpectralFXConfig
+    
+    # Create a simple ramp magnitude and zero phase
+    mag = np.linspace(0.0, 1.0, 1024)
+    phase = np.zeros_like(mag)
+    
+    # Test with bitcrush mode
+    class DummyCfg:
+        distortion_mode = "bitcrush"
+        distortion_strength = 0.5
+        distortion_params = {}
+    
+    cfg = _SpectralFXConfig(
+        distortion_mode=DummyCfg.distortion_mode,
+        distortion_strength=DummyCfg.distortion_strength,
+        distortion_params=DummyCfg.distortion_params,
+    )
+    
+    mag_out, phase_out = apply_spectral_fx(mag, phase, cfg)
+    
+    # Output shapes should be unchanged
+    assert mag_out.shape == mag.shape
+    assert phase_out.shape == phase.shape
+    
+    # The effect should actually change something
+    assert np.any(mag_out != mag), "bitcrush should change magnitude"
+
