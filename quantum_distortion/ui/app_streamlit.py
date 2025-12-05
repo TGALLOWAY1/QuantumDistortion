@@ -28,7 +28,7 @@ import os
 import sys
 from io import BytesIO
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 
 # Add project root to Python path for Streamlit
@@ -58,6 +58,80 @@ KEY_OPTIONS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 SCALE_OPTIONS = ["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
 TAP_OPTIONS = ["input", "pre_quant", "post_dist", "output"]
 VISUAL_OPTIONS = ["Spectrum", "Oscilloscope", "Phase Scope"]
+
+
+def build_processing_config_from_session() -> Dict[str, Any]:
+    """
+    Build a centralized processing configuration dict from Streamlit session state.
+    
+    Collects all UI settings (low band, high band, quantum FX, etc.) into a single
+    nested config structure that can be passed to the DSP pipeline.
+    
+    Returns
+    -------
+    dict
+        Nested configuration dict with keys:
+        - crossover_freq: float
+        - low_band: dict with saturation, mono, output_trim settings
+        - high_band: dict with STFT, spectral FX settings
+        - quantum_fx: dict with freeze, formant, harmonic locking settings
+        - delta_listen: bool
+    """
+    import streamlit as st
+    
+    config: Dict[str, Any] = {}
+    
+    # Crossover frequency (shared between low and high band)
+    low_band_settings = st.session_state.get("low_band_settings", {})
+    config["crossover_freq"] = low_band_settings.get("crossover_freq", 300)
+    
+    # Low band settings
+    config["low_band"] = {
+        "saturation_amount": low_band_settings.get("saturation_amount", 0.3),
+        "saturation_type": low_band_settings.get("saturation_type", "Tube"),
+        "mono_strength": low_band_settings.get("mono_strength", 1.0),
+        "output_trim_db": low_band_settings.get("output_trim_db", 0),
+    }
+    
+    # High band settings
+    high_band_settings = st.session_state.get("high_band_settings", {})
+    config["high_band"] = {
+        "fft_size": high_band_settings.get("fft_size", 2048),
+        "window_type": high_band_settings.get("window_type", "hann"),
+        "precision_mode": high_band_settings.get("precision_mode", "Quantized"),
+        "mag_decimation": high_band_settings.get("mag_decimation", 0.5),
+        "phase_dispersal": high_band_settings.get("phase_dispersal", 0.3),
+        "bin_scrambling": high_band_settings.get("bin_scrambling", 0.2),
+        "output_trim_db": high_band_settings.get("output_trim_db", 0),
+    }
+    
+    # Quantum FX settings
+    quantum_fx_settings = st.session_state.get("quantum_fx_settings", {})
+    harmonic_lock_mode = quantum_fx_settings.get("harmonic_lock_mode", "Off")
+    custom_fundamental_hz = quantum_fx_settings.get("custom_fundamental_hz", None)
+    
+    # Map harmonic_lock_mode to fundamental frequency
+    fundamental_hz = None
+    if harmonic_lock_mode == "F#1":
+        fundamental_hz = 46.25
+    elif harmonic_lock_mode == "G1":
+        fundamental_hz = 49.0
+    elif harmonic_lock_mode == "A#1":
+        fundamental_hz = 58.27
+    elif harmonic_lock_mode == "Custom" and custom_fundamental_hz is not None:
+        fundamental_hz = float(custom_fundamental_hz)
+    
+    config["quantum_fx"] = {
+        "spectral_freeze": quantum_fx_settings.get("spectral_freeze", False),
+        "formant_shift": quantum_fx_settings.get("formant_shift", 0),
+        "harmonic_lock_mode": harmonic_lock_mode,
+        "fundamental_hz": fundamental_hz,
+    }
+    
+    # Delta listen setting
+    config["delta_listen"] = st.session_state.get("delta_listen", False)
+    
+    return config
 
 
 def _audio_to_wav_bytes(audio: np.ndarray, sr: int) -> bytes:
@@ -375,141 +449,41 @@ def render_v2_ui() -> None:
                 if audio is None or sr is None:
                     st.error("Please load an audio file first.")
                 else:
-                    # Get Low Band settings
-                    low_band_settings = st.session_state.get("low_band_settings", {})
-                    crossover_freq = low_band_settings.get("crossover_freq", 300)
-                    saturation_amount = low_band_settings.get("saturation_amount", 0.3)
-                    saturation_type = low_band_settings.get("saturation_type", "Tube")
-                    mono_strength = low_band_settings.get("mono_strength", 1.0)
-                    output_trim_db = low_band_settings.get("output_trim_db", 0)
+                    # Build centralized config from session state
+                    config = build_processing_config_from_session()
                     
-                    # Map saturation_amount to lowband_drive
-                    # saturation_amount 0.0 -> drive 1.0 (no saturation)
-                    # saturation_amount 1.0 -> drive ~5.0 (heavy saturation)
-                    # Linear mapping for now
-                    lowband_drive = 1.0 + (saturation_amount * 4.0)
+                    # Show warnings for features not yet implemented
+                    low_band = config.get("low_band", {})
+                    if low_band.get("saturation_type") != "Tube":
+                        st.warning(f"Saturation type '{low_band.get('saturation_type')}' not yet implemented in DSP. Using Tube mode.")
+                    if low_band.get("mono_strength", 1.0) < 1.0:
+                        st.warning(f"Mono strength {low_band.get('mono_strength')} not yet implemented in DSP. Using full mono (1.0).")
+                    if low_band.get("output_trim_db", 0) != 0:
+                        st.warning(f"Low band output trim ({low_band.get('output_trim_db')} dB) not yet implemented in DSP.")
                     
-                    # TODO: Wire saturation_type to DSP
-                    # Currently only "Tube" is supported via soft_tube()
-                    # "Clip" mode needs to be implemented in saturation.py
-                    if saturation_type != "Tube":
-                        st.warning(f"Saturation type '{saturation_type}' not yet implemented in DSP. Using Tube mode.")
+                    high_band = config.get("high_band", {})
+                    if high_band.get("fft_size", 2048) != 2048:
+                        st.warning(f"FFT size {high_band.get('fft_size')} not yet implemented in DSP. Using default 2048.")
+                    if high_band.get("window_type", "hann") != "hann":
+                        st.warning(f"Window type '{high_band.get('window_type')}' not yet implemented in DSP. Using Hann window.")
+                    if high_band.get("precision_mode", "Quantized") != "Quantized":
+                        st.info(f"Precision mode '{high_band.get('precision_mode')}' not yet implemented. Using default quantization.")
+                    if high_band.get("output_trim_db", 0) != 0:
+                        st.warning(f"High band output trim ({high_band.get('output_trim_db')} dB) not yet implemented in DSP.")
                     
-                    # TODO: Wire mono_strength to DSP
-                    # Currently make_mono_lowband() is all-or-nothing
-                    # Need to add strength parameter for partial mono mixing
-                    if mono_strength < 1.0:
-                        st.warning(f"Mono strength {mono_strength} not yet implemented in DSP. Using full mono (1.0).")
-                    
-                    # TODO: Wire low_output_trim_db to DSP
-                    # Currently no per-band output trim in pipeline
-                    # Need to add gain stage after low band processing
-                    if output_trim_db != 0:
-                        st.warning(f"Low band output trim ({output_trim_db} dB) not yet implemented in DSP.")
-                    
-                    # Get High Band settings
-                    high_band_settings = st.session_state.get("high_band_settings", {})
-                    fft_size = high_band_settings.get("fft_size", 2048)
-                    window_type = high_band_settings.get("window_type", "hann")
-                    precision_mode = high_band_settings.get("precision_mode", "Quantized")
-                    mag_decimation = high_band_settings.get("mag_decimation", 0.5)
-                    phase_dispersal = high_band_settings.get("phase_dispersal", 0.3)
-                    bin_scrambling = high_band_settings.get("bin_scrambling", 0.2)
-                    high_output_trim_db = high_band_settings.get("output_trim_db", 0)
-                    
-                    # TODO: Wire fft_size to DSP
-                    # Currently N_FFT_DEFAULT = 2048 is hardcoded in pipeline.py
-                    # Need to add n_fft parameter to process_audio() and pass through to stft_mono()
-                    if fft_size != 2048:
-                        st.warning(f"FFT size {fft_size} not yet implemented in DSP. Using default 2048.")
-                    
-                    # TODO: Wire window_type to DSP
-                    # Currently WINDOW_DEFAULT = "hann" is hardcoded and enforced
-                    # Need to support blackmanharris window in stft_utils.py and pipeline
-                    if window_type != "hann":
-                        st.warning(f"Window type '{window_type}' not yet implemented in DSP. Using Hann window.")
-                    
-                    # TODO: Wire precision_mode to DSP
-                    # "Clean" = no quantization, "Quantized" = normal quantization, "Brutal" = aggressive quantization
-                    # Need to map this to quantization parameters (snap_strength, smear, etc.)
-                    if precision_mode != "Quantized":
-                        st.info(f"Precision mode '{precision_mode}' not yet implemented. Using default quantization.")
-                    
-                    # Determine which spectral FX to apply based on non-zero values
-                    # Priority: bin_scramble > phase_dispersal > bitcrush (magnitude decimation)
-                    spectral_fx_mode = None
-                    spectral_fx_strength = 0.0
-                    spectral_fx_params = {}
-                    
-                    if bin_scrambling > 0.0:
-                        spectral_fx_mode = "bin_scramble"
-                        spectral_fx_strength = bin_scrambling
-                        # bin_scramble params can be customized here if needed
-                    elif phase_dispersal > 0.0:
-                        spectral_fx_mode = "phase_dispersal"
-                        spectral_fx_strength = phase_dispersal
-                    elif mag_decimation > 0.0:
-                        spectral_fx_mode = "bitcrush"
-                        spectral_fx_strength = mag_decimation
-                    
-                    # TODO: Wire high_output_trim_db to DSP
-                    # Currently no per-band output trim in pipeline
-                    # Need to add gain stage after high band processing
-                    if high_output_trim_db != 0:
-                        st.warning(f"High band output trim ({high_output_trim_db} dB) not yet implemented in DSP.")
-                    
-                    # Get Creative Quantum FX settings
-                    quantum_fx_settings = st.session_state.get("quantum_fx_settings", {})
-                    spectral_freeze = quantum_fx_settings.get("spectral_freeze", False)
-                    formant_shift = quantum_fx_settings.get("formant_shift", 0)
-                    harmonic_lock_mode = quantum_fx_settings.get("harmonic_lock_mode", "Off")
-                    custom_fundamental_hz = quantum_fx_settings.get("custom_fundamental_hz", None)
-                    
-                    # Map harmonic_lock_mode to fundamental frequency
-                    fundamental_hz = None
-                    if harmonic_lock_mode == "F#1":
-                        fundamental_hz = 46.25  # F#1 in Hz
-                    elif harmonic_lock_mode == "G1":
-                        fundamental_hz = 49.0  # G1 in Hz
-                    elif harmonic_lock_mode == "A#1":
-                        fundamental_hz = 58.27  # A#1 in Hz
-                    elif harmonic_lock_mode == "Custom" and custom_fundamental_hz is not None:
-                        fundamental_hz = float(custom_fundamental_hz)
-                    
-                    # TODO: Wire spectral_freeze to DSP
-                    # Need to implement frame-holding mechanism in STFT processing
-                    # Should freeze the current STFT frame when enabled, creating sustained texture
-                    if spectral_freeze:
+                    quantum_fx = config.get("quantum_fx", {})
+                    if quantum_fx.get("spectral_freeze", False):
                         st.info("Spectral Freeze: Feature not yet implemented in DSP. Will hold current spectral texture when available.")
+                    if quantum_fx.get("formant_shift", 0) != 0:
+                        st.info(f"Formant Shift ({quantum_fx.get('formant_shift')}%): Feature not yet implemented in DSP. Will shift vocal character when available.")
+                    if quantum_fx.get("fundamental_hz") is not None:
+                        st.info(f"Harmonic Locking ({quantum_fx.get('fundamental_hz'):.2f} Hz): Feature not yet implemented in DSP. Will lock harmonics when available.")
                     
-                    # TODO: Wire formant_shift to DSP
-                    # Need to implement formant shifting in spectral domain
-                    # Should shift formant frequencies (typically 500-3000 Hz range) by percentage
-                    # Positive values shift up (brighter), negative values shift down (warmer)
-                    if formant_shift != 0:
-                        st.info(f"Formant Shift ({formant_shift}%): Feature not yet implemented in DSP. Will shift vocal character when available.")
-                    
-                    # TODO: Wire harmonic_lock_mode/fundamental_hz to DSP
-                    # Need to implement harmonic locking in quantizer
-                    # Should force quantization to lock onto specific fundamental frequency
-                    # This creates strong harmonic foundation for bass design
-                    if fundamental_hz is not None:
-                        st.info(f"Harmonic Locking ({fundamental_hz:.2f} Hz): Feature not yet implemented in DSP. Will lock harmonics when available.")
-                    
-                    # Process with multiband enabled
+                    # Process with config
                     processed, taps = process_audio(
                         audio=audio,
                         sr=sr,
-                        use_multiband=True,
-                        crossover_hz=float(crossover_freq),
-                        lowband_drive=float(lowband_drive),
-                        spectral_fx_mode=spectral_fx_mode,
-                        spectral_fx_strength=float(spectral_fx_strength),
-                        spectral_fx_params=spectral_fx_params if spectral_fx_params else None,
-                        # Using default values for quantization parameters for now
-                        # TODO: Wire precision_mode to quantization settings
-                        # TODO: Pass quantum_fx_settings (spectral_freeze, formant_shift, fundamental_hz) to DSP
-                        # These should be applied in the high-band STFT processing path
+                        config=config,
                     )
                     
                     # TODO: Apply low_output_trim_db gain if implemented

@@ -760,6 +760,7 @@ def process_audio(
     spectral_fx_mode: Union[str, None] = None,
     spectral_fx_strength: float = 0.0,
     spectral_fx_params: Union[Dict[str, Any], None] = None,
+    config: Union[Dict[str, Any], None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
@@ -817,6 +818,50 @@ def process_audio(
             distortion_params = {}
         if spectral_fx_params is None:
             spectral_fx_params = {}
+        
+        # Extract values from config dict if provided (V2 UI centralized config)
+        # Config values override individual parameters, preserving backward compatibility
+        if config is not None:
+            # Multiband settings
+            if "crossover_freq" in config:
+                crossover_hz = float(config["crossover_freq"])
+            if "low_band" in config:
+                low_band_cfg = config["low_band"]
+                # Map saturation_amount to lowband_drive
+                # saturation_amount 0.0 -> drive 1.0, 1.0 -> drive 5.0
+                saturation_amount = low_band_cfg.get("saturation_amount", 0.3)
+                lowband_drive = 1.0 + (saturation_amount * 4.0)
+                # TODO: Wire low_band["saturation_type"] to DSP (currently only "Tube" supported)
+                # TODO: Wire low_band["mono_strength"] to DSP (currently all-or-nothing)
+                # TODO: Wire low_band["output_trim_db"] to DSP (needs per-band gain stage)
+            if "high_band" in config:
+                high_band_cfg = config["high_band"]
+                # TODO: Wire high_band["fft_size"] to DSP (currently hardcoded to 2048)
+                # TODO: Wire high_band["window_type"] to DSP (currently hardcoded to "hann")
+                # TODO: Wire high_band["precision_mode"] to DSP (needs mapping to quantization params)
+                # Determine spectral FX from high band settings
+                # Priority: bin_scramble > phase_dispersal > bitcrush
+                bin_scrambling = high_band_cfg.get("bin_scrambling", 0.2)
+                phase_dispersal = high_band_cfg.get("phase_dispersal", 0.3)
+                mag_decimation = high_band_cfg.get("mag_decimation", 0.5)
+                
+                if bin_scrambling > 0.0:
+                    spectral_fx_mode = "bin_scramble"
+                    spectral_fx_strength = bin_scrambling
+                elif phase_dispersal > 0.0:
+                    spectral_fx_mode = "phase_dispersal"
+                    spectral_fx_strength = phase_dispersal
+                elif mag_decimation > 0.0:
+                    spectral_fx_mode = "bitcrush"
+                    spectral_fx_strength = mag_decimation
+                # TODO: Wire high_band["output_trim_db"] to DSP (needs per-band gain stage)
+            if "quantum_fx" in config:
+                quantum_fx_cfg = config["quantum_fx"]
+                # TODO: Wire quantum_fx["spectral_freeze"] to DSP (needs frame-holding mechanism)
+                # TODO: Wire quantum_fx["formant_shift"] to DSP (needs formant shifting in spectral domain)
+                # TODO: Wire quantum_fx["fundamental_hz"] to DSP (needs harmonic locking in quantizer)
+            # Enable multiband if config is provided (V2 UI always uses multiband)
+            use_multiband = True
 
         # Preview mode: truncate audio to first N seconds for faster iteration
         # This happens before any processing, so the rest of the pipeline doesn't
