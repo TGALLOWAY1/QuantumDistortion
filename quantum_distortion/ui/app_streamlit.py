@@ -713,6 +713,7 @@ def render_v2_ui() -> None:
                 max_value=600,
                 value=settings.get("crossover_freq", 300),
                 step=10,
+                key="v2_low_crossover_freq",
             )
             settings["crossover_freq"] = crossover_freq
             # Store in session state for reuse in High Band panel
@@ -725,6 +726,7 @@ def render_v2_ui() -> None:
                 max_value=1.0,
                 value=settings.get("saturation_amount", 0.3),
                 step=0.05,
+                key="v2_low_saturation_amount",
             )
             settings["saturation_amount"] = low_saturation_amount
             
@@ -734,6 +736,7 @@ def render_v2_ui() -> None:
                 ["Tube", "Clip"],
                 index=0 if settings.get("saturation_type", "Tube") == "Tube" else 1,
                 horizontal=True,
+                key="v2_low_saturation_type",
             )
             settings["saturation_type"] = low_saturation_type
         
@@ -745,6 +748,7 @@ def render_v2_ui() -> None:
                 max_value=1.0,
                 value=settings.get("mono_strength", 1.0),
                 step=0.1,
+                key="v2_low_mono_strength",
             )
             settings["mono_strength"] = low_mono_strength
             
@@ -755,6 +759,7 @@ def render_v2_ui() -> None:
                 max_value=12,
                 value=settings.get("output_trim_db", 0),
                 step=1,
+                key="v2_low_output_trim",
             )
             settings["output_trim_db"] = low_output_trim_db
             
@@ -803,6 +808,7 @@ def render_v2_ui() -> None:
                 "FFT Size",
                 fft_options,
                 index=fft_index,
+                key="v2_high_fft_size",
             )
             settings["fft_size"] = fft_size
             
@@ -810,6 +816,7 @@ def render_v2_ui() -> None:
                 "Window Type",
                 ["hann", "blackmanharris"],
                 index=0 if settings.get("window_type", "hann") == "hann" else 1,
+                key="v2_high_window_type",
             )
             settings["window_type"] = window_type
             
@@ -820,6 +827,7 @@ def render_v2_ui() -> None:
                 "Precision Mode",
                 precision_options,
                 index=precision_index,
+                key="v2_high_precision_mode",
             )
             settings["precision_mode"] = precision_mode
         
@@ -831,6 +839,7 @@ def render_v2_ui() -> None:
                 max_value=1.0,
                 value=settings.get("mag_decimation", 0.5),
                 step=0.05,
+                key="v2_high_mag_decimation",
             )
             settings["mag_decimation"] = mag_decimation
             
@@ -840,6 +849,7 @@ def render_v2_ui() -> None:
                 max_value=1.0,
                 value=settings.get("phase_dispersal", 0.3),
                 step=0.05,
+                key="v2_high_phase_dispersal",
             )
             settings["phase_dispersal"] = phase_dispersal
             
@@ -849,6 +859,7 @@ def render_v2_ui() -> None:
                 max_value=1.0,
                 value=settings.get("bin_scrambling", 0.2),
                 step=0.05,
+                key="v2_high_bin_scrambling",
             )
             settings["bin_scrambling"] = bin_scrambling
             
@@ -858,6 +869,7 @@ def render_v2_ui() -> None:
                 max_value=12,
                 value=settings.get("output_trim_db", 0),
                 step=1,
+                key="v2_high_output_trim",
             )
             settings["output_trim_db"] = high_output_trim_db
         
@@ -892,6 +904,7 @@ def render_v2_ui() -> None:
                 "Spectral Freeze",
                 value=settings.get("spectral_freeze", False),
                 help="Hold current texture (not yet implemented)",
+                key="v2_quantum_spectral_freeze",
             )
             settings["spectral_freeze"] = spectral_freeze
             
@@ -901,6 +914,7 @@ def render_v2_ui() -> None:
                 max_value=100,
                 value=settings.get("formant_shift", 0),
                 step=5,
+                key="v2_quantum_formant_shift",
             )
             settings["formant_shift"] = formant_shift
         
@@ -912,6 +926,7 @@ def render_v2_ui() -> None:
                 "Harmonic Locking",
                 harmonic_lock_options,
                 index=lock_index,
+                key="v2_quantum_harmonic_lock",
             )
             settings["harmonic_lock_mode"] = harmonic_lock_mode
             
@@ -924,6 +939,7 @@ def render_v2_ui() -> None:
                     max_value=2000.0,
                     value=float(settings.get("custom_fundamental_hz", 55.0)),
                     step=1.0,
+                    key="v2_quantum_custom_fundamental",
                 )
                 settings["custom_fundamental_hz"] = custom_fundamental_hz
             else:
