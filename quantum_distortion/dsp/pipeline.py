@@ -30,6 +30,100 @@ from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
 from quantum_distortion.dsp.crossover import linkwitz_riley_split, estimate_filter_group_delay_samples
 from quantum_distortion.dsp.saturation import soft_tube, make_mono_lowband
+from quantum_distortion.dsp import spectral_fx
+
+
+class _SpectralFXConfig:
+    """Simple config object for spectral FX parameters."""
+    def __init__(
+        self,
+        distortion_mode: Union[str, None] = None,
+        distortion_strength: float = 0.0,
+        distortion_params: Union[Dict[str, Any], None] = None,
+    ):
+        self.distortion_mode = distortion_mode
+        self.distortion_strength = distortion_strength
+        self.distortion_params = distortion_params or {}
+
+
+def apply_spectral_fx(
+    mag: np.ndarray,
+    phase: np.ndarray,
+    cfg: _SpectralFXConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Map high-level distortion settings from the config into concrete
+    spectral FX parameters and apply them to a single STFT frame.
+
+    This is designed for the HIGH-BAND path only. The low band should
+    bypass these FX completely to preserve punch and phase coherence.
+    """
+    mode = getattr(cfg, "distortion_mode", None)
+    s = float(getattr(cfg, "distortion_strength", 0.0))
+    params = getattr(cfg, "distortion_params", {}) or {}
+
+    if not mode or s <= 0.0:
+        return mag, phase
+
+    if mode == "bitcrush":
+        method = params.get("method", "log")
+        # Smoothly ramp from subtle to aggressive in dB space.
+        step_db = params.get("step_db", 0.5 + 7.5 * (s ** 1.3))
+        step = params.get("step", 0.01 + 0.09 * (s ** 1.2))
+        threshold = params.get("threshold", None)
+        if threshold is None and s >= 0.4:
+            threshold = 0.02 * (s ** 1.5) * float(mag.max() if mag.size else 1.0)
+
+        return spectral_fx.bitcrush(
+            mag,
+            phase,
+            method=method,
+            step=step,
+            step_db=step_db,
+            threshold=threshold,
+        )
+
+    if mode == "phase_dispersal":
+        # Nonlinear mapping so small s is quite gentle.
+        amount = params.get("amount", (s ** 1.7) * np.pi)
+        # Only rotate louder bins by default.
+        thresh_default = 0.01 * float(mag.max() if mag.size else 1.0)
+        thresh = params.get("thresh", thresh_default)
+        randomized = params.get("randomized", s > 0.35)
+        rand_amt = params.get(
+            "rand_amt",
+            (0.0 if not randomized else 0.2 * (s ** 1.3) * np.pi),
+        )
+        return spectral_fx.phase_dispersal(
+            mag,
+            phase,
+            thresh=thresh,
+            amount=amount,
+            randomized=randomized,
+            rand_amt=rand_amt,
+        )
+
+    if mode == "bin_scramble":
+        base_window = params.get("window", None)
+        if base_window is None:
+            # 3 → 15 as strength increases, using a gentle curve.
+            base_window = int(3 + (12 * (s ** 1.2)))
+        if base_window < 3:
+            base_window = 3
+        if base_window % 2 == 0:
+            base_window += 1
+
+        mode_name = params.get("mode", "swap" if s < 0.4 else "random_pick")
+
+        return spectral_fx.bin_scramble(
+            mag,
+            phase,
+            window=base_window,
+            mode=mode_name,
+        )
+
+    # Unknown mode → no-op
+    return mag, phase
 
 
 # OLA-Compliant STFT Configuration
@@ -77,6 +171,10 @@ def _apply_spectral_quantization_to_stft(
     smear: float,
     bin_smoothing: bool,
     timing: Union[RenderTiming, None] = None,
+    is_high_band: bool = False,
+    spectral_fx_mode: Union[str, None] = None,
+    spectral_fx_strength: float = 0.0,
+    spectral_fx_params: Union[Dict[str, Any], None] = None,
 ) -> np.ndarray:
     """
     Apply spectral quantization directly to an existing STFT matrix S.
@@ -89,6 +187,10 @@ def _apply_spectral_quantization_to_stft(
         freqs: Frequency array corresponding to S
         key, scale, snap_strength, smear, bin_smoothing: Quantization parameters
         timing: Optional timing object to accumulate processing time
+        is_high_band: If True, this is high-band processing (spectral FX applies)
+        spectral_fx_mode: Spectral FX mode ("bitcrush", "phase_dispersal", "bin_scramble", or None)
+        spectral_fx_strength: Spectral FX strength (0.0-1.0)
+        spectral_fx_params: Optional dict of spectral FX parameter overrides
     
     Returns:
         Modified complex STFT matrix S (same shape as input)
@@ -108,6 +210,15 @@ def _apply_spectral_quantization_to_stft(
         for t in range(S.shape[1]):
             frame_mags = mags[:, t]
             frame_phases = phases[:, t]
+
+            # Apply spectral FX before quantization (only for high-band)
+            if is_high_band:
+                cfg = _SpectralFXConfig(
+                    distortion_mode=spectral_fx_mode,
+                    distortion_strength=spectral_fx_strength,
+                    distortion_params=spectral_fx_params,
+                )
+                frame_mags, frame_phases = apply_spectral_fx(frame_mags, frame_phases, cfg)
 
             new_mags, new_phases = quantize_spectrum(
                 mags=frame_mags,
@@ -228,6 +339,10 @@ def _process_single_band(
     tap_input: np.ndarray,
     passthrough_test: bool = False,
     timing: Union[RenderTiming, None] = None,
+    is_high_band: bool = False,
+    spectral_fx_mode: Union[str, None] = None,
+    spectral_fx_strength: float = 0.0,
+    spectral_fx_params: Union[Dict[str, Any], None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Process a single audio band through the full pipeline.
@@ -355,6 +470,10 @@ def _process_single_band(
             smear=smear,
             bin_smoothing=bin_smoothing,
             timing=timing,
+            is_high_band=is_high_band,
+            spectral_fx_mode=spectral_fx_mode,
+            spectral_fx_strength=spectral_fx_strength,
+            spectral_fx_params=spectral_fx_params,
         )
         # Convert to time-domain for tap and distortion
         # NOTE: If post-quant is also enabled, we defer the final iSTFT
@@ -471,6 +590,10 @@ def _process_single_band(
                 smear=smear,
                 bin_smoothing=bin_smoothing,
                 timing=timing,
+                is_high_band=is_high_band,
+                spectral_fx_mode=spectral_fx_mode,
+                spectral_fx_strength=spectral_fx_strength,
+                spectral_fx_params=spectral_fx_params,
             )
             
             # =================================================================
@@ -512,6 +635,10 @@ def _process_single_band(
                 smear=smear,
                 bin_smoothing=bin_smoothing,
                 timing=timing,
+                is_high_band=is_high_band,
+                spectral_fx_mode=spectral_fx_mode,
+                spectral_fx_strength=spectral_fx_strength,
+                spectral_fx_params=spectral_fx_params,
             )
             
             # =================================================================
@@ -630,6 +757,9 @@ def process_audio(
     crossover_hz: float = 300.0,
     lowband_drive: float = 1.0,
     passthrough_test: bool = False,
+    spectral_fx_mode: Union[str, None] = None,
+    spectral_fx_strength: float = 0.0,
+    spectral_fx_params: Union[Dict[str, Any], None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
@@ -685,6 +815,8 @@ def process_audio(
     try:
         if distortion_params is None:
             distortion_params = {}
+        if spectral_fx_params is None:
+            spectral_fx_params = {}
 
         # Preview mode: truncate audio to first N seconds for faster iteration
         # This happens before any processing, so the rest of the pipeline doesn't
@@ -757,6 +889,10 @@ def process_audio(
                 tap_input=high_aligned,  # Use band-specific input for dry/wet mix
                 passthrough_test=passthrough_test,
                 timing=timing,
+                is_high_band=True,  # Spectral FX applies only to high band
+                spectral_fx_mode=spectral_fx_mode,
+                spectral_fx_strength=spectral_fx_strength,
+                spectral_fx_params=spectral_fx_params,
             )
             
             # Recombine bands: mixed output = low_band_processed + high_band_processed
@@ -784,6 +920,7 @@ def process_audio(
         else:
             # Single-band processing (original behavior)
             # In passthrough_test mode, this performs transparent STFT->ISTFT roundtrip
+            # Note: Spectral FX only applies in multiband mode (high-band only)
             x_out, taps_band = _process_single_band(
                 x_in,
                 sr=sr,
@@ -802,6 +939,10 @@ def process_audio(
                 tap_input=tap_input,
                 passthrough_test=passthrough_test,
                 timing=timing,
+                is_high_band=False,  # Single-band mode: no spectral FX
+                spectral_fx_mode=spectral_fx_mode,
+                spectral_fx_strength=spectral_fx_strength,
+                spectral_fx_params=spectral_fx_params,
             )
             
             # Add input tap to match expected structure

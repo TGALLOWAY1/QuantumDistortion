@@ -26,16 +26,26 @@ def process_audio(
     limiter_ceiling_db: float = DEFAULT_LIMITER_CEILING_DB,
     dry_wet: float = DEFAULT_DRY_WET,
     preview_enabled: Union[bool, None] = None,
+    use_multiband: bool = False,
+    crossover_hz: float = 300.0,
+    lowband_drive: float = 1.0,
+    passthrough_test: bool = False,
+    spectral_fx_mode: Union[str, None] = None,
+    spectral_fx_strength: float = 0.0,
+    spectral_fx_params: Union[Dict[str, Any], None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]
 ```
 
 **Description**: Main offline processing entry point. Processes audio through the full DSP pipeline:
 - Optional preview truncation (if `preview_enabled`)
+- Optional multiband split (if `use_multiband=True`)
 - Optional spectral pre-quantization
+- Optional spectral FX (bitcrush, phase_dispersal, bin_scramble) - high-band only in multiband mode
 - Time-domain distortion
 - Optional spectral post-quantization
 - Optional limiter
 - Dry/wet mix with input
+- Optional multiband recombination (if `use_multiband=True`)
 
 **Returns**: 
 - `np.ndarray`: Processed audio signal
@@ -212,4 +222,57 @@ process_file_to_file(
 - `istft_mono()`: Reconstructs audio from complex STFT
 
 These are used internally by `process_audio` and are available for direct use in tests if needed.
+
+## Spectral FX (M11)
+
+**Location**: `quantum_distortion/dsp/spectral_fx.py`
+
+Spectral FX are frequency-domain creative effects that operate on magnitude and phase spectra in the high-band STFT path. They are applied before quantization in multiband mode (high-band only).
+
+### Available Modes
+
+Three spectral FX modes are available:
+
+1. **`bitcrush`**: Spectral bitcrush/decimation in the magnitude domain
+   - Quantizes magnitude values to reduce resolution
+   - Supports `"uniform"` (linear step) or `"log"` (dB-space step) methods
+   - Optional threshold to zero out small bins
+   - Parameters scale with `spectral_fx_strength` (0.0-1.0)
+
+2. **`phase_dispersal`**: Rotates phase for louder bins to create 'laser'/'zap' textures
+   - Applies phase rotation proportional to magnitude
+   - Optional randomization for jitter
+   - Respects magnitude threshold to only affect bins above threshold
+   - Parameters scale with `spectral_fx_strength` (0.0-1.0)
+
+3. **`bin_scramble`**: Locally scrambles magnitude bins to blur texture
+   - Supports `"random_pick"` (random neighbor selection) or `"swap"` (adjacent bin swapping) modes
+   - Maintains gross energy through rescaling
+   - Window size controls local neighborhood size
+
+### Usage
+
+Spectral FX are controlled via `process_audio` parameters:
+- `spectral_fx_mode`: `"bitcrush"`, `"phase_dispersal"`, `"bin_scramble"`, or `None` (disabled)
+- `spectral_fx_strength`: Strength parameter (0.0-1.0) that scales effect intensity
+- `spectral_fx_params`: Optional dict of parameter overrides (method, threshold, window, etc.)
+
+**Important**: Spectral FX only apply to the high band in multiband mode (`use_multiband=True`). In single-band mode, they are disabled to preserve full-band processing behavior.
+
+### Example
+
+```python
+from quantum_distortion.dsp.pipeline import process_audio
+
+# Process with bitcrush spectral FX on high band
+processed, taps = process_audio(
+    audio,
+    sr=48000,
+    use_multiband=True,
+    crossover_hz=300.0,
+    spectral_fx_mode="bitcrush",
+    spectral_fx_strength=0.5,
+    spectral_fx_params={"method": "uniform", "threshold": 0.01},
+)
+```
 
