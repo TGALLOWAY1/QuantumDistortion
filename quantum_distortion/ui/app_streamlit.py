@@ -571,9 +571,7 @@ def render_v2_ui() -> None:
     # ===========================
     # Signal Flow Overview
     # ===========================
-    with st.container():
-        st.subheader("📊 Signal Flow Overview")
-        
+    with st.expander("📊 Signal Flow Overview", expanded=True):
         # Block diagram using columns and markdown
         # Using dark theme colors that work with Streamlit's default theme
         col1, col2, col3, col4, col5 = st.columns([1.2, 1, 1.2, 1, 1.2], gap="small")
