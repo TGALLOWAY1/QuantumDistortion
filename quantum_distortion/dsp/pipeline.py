@@ -43,12 +43,6 @@ HOP_LENGTH_DEFAULT = N_FFT_DEFAULT // 4  # 512 (enforced by OLA architecture)
 WINDOW_DEFAULT = "hann"  # Ignored - OLA architecture enforces Hann window
 CENTER_DEFAULT = True  # Controls center padding (librosa-compatible behavior)
 
-# Legacy names for backward compatibility
-N_FFT = N_FFT_DEFAULT
-HOP_LENGTH = HOP_LENGTH_DEFAULT
-WINDOW = WINDOW_DEFAULT
-CENTER = CENTER_DEFAULT
-
 
 @dataclass
 class RenderTiming:
