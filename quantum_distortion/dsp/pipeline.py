@@ -822,6 +822,11 @@ def process_audio(
         # Extract values from config dict if provided (V2 UI centralized config)
         # Config values override individual parameters, preserving backward compatibility
         if config is not None:
+            # Quantization settings (key and scale)
+            if "quantization" in config:
+                quant_cfg = config["quantization"]
+                key = str(quant_cfg.get("key", key))
+                scale = str(quant_cfg.get("scale", scale))
             # Multiband settings
             if "crossover_freq" in config:
                 crossover_hz = float(config["crossover_freq"])

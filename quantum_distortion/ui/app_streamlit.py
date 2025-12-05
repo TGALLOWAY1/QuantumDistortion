@@ -72,6 +72,7 @@ def build_processing_config_from_session() -> Dict[str, Any]:
     dict
         Nested configuration dict with keys:
         - crossover_freq: float
+        - quantization: dict with key, scale settings
         - low_band: dict with saturation, mono, output_trim settings
         - high_band: dict with STFT, spectral FX settings
         - quantum_fx: dict with freeze, formant, harmonic locking settings
@@ -80,6 +81,13 @@ def build_processing_config_from_session() -> Dict[str, Any]:
     import streamlit as st
     
     config: Dict[str, Any] = {}
+    
+    # Quantization settings (key and scale)
+    quant_settings = st.session_state.get("quantization_settings", {})
+    config["quantization"] = {
+        "key": quant_settings.get("key", "D"),
+        "scale": quant_settings.get("scale", "minor"),
+    }
     
     # Crossover frequency (shared between low and high band)
     low_band_settings = st.session_state.get("low_band_settings", {})
@@ -794,8 +802,39 @@ def render_v2_ui() -> None:
                 "output_trim_db": 0,
             }
         
+        # Initialize quantization settings (key/scale) if not present
+        if "quantization_settings" not in st.session_state:
+            st.session_state["quantization_settings"] = {
+                "key": "D",
+                "scale": "minor",
+            }
+        
         # Get current settings
         settings = st.session_state["high_band_settings"]
+        quant_settings = st.session_state["quantization_settings"]
+        
+        # Quantization Settings (Key & Scale) - at the top
+        st.markdown("**Quantization Settings**")
+        col_key, col_scale = st.columns(2, gap="medium")
+        with col_key:
+            key = st.selectbox(
+                "Key",
+                KEY_OPTIONS,
+                index=KEY_OPTIONS.index(quant_settings.get("key", "D")) if quant_settings.get("key", "D") in KEY_OPTIONS else 3,
+                key="v2_quantization_key",
+            )
+            quant_settings["key"] = key
+        with col_scale:
+            scale = st.selectbox(
+                "Scale",
+                SCALE_OPTIONS,
+                index=SCALE_OPTIONS.index(quant_settings.get("scale", "minor")) if quant_settings.get("scale", "minor") in SCALE_OPTIONS else 1,
+                key="v2_quantization_scale",
+            )
+            quant_settings["scale"] = scale
+        st.session_state["quantization_settings"] = quant_settings
+        
+        st.markdown("---")
         
         # Controls layout - organized in columns
         col_stft, col_fx = st.columns(2, gap="medium")
