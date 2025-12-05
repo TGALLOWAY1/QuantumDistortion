@@ -108,7 +108,36 @@ def phase_dispersal(
     -------
     mag_out, phase_out : np.ndarray, np.ndarray
     """
-    return mag, phase
+    mag = np.asarray(mag, dtype=float).copy()
+    phase = np.asarray(phase, dtype=float)
+
+    # Early return if amount <= 0 and not randomized
+    if amount <= 0 and not randomized:
+        return mag, phase
+
+    # Compute boolean mask
+    if thresh is not None and thresh > 0.0:
+        mask = mag > thresh
+    else:
+        mask = np.ones_like(mag, dtype=bool)
+
+    # Base rotation
+    phase_out = np.array(phase, copy=True)
+    rotation = amount * (mag / (np.max(mag) + 1e-12))
+    rotation = np.where(mask, rotation, 0.0)
+
+    # Add random jitter if requested
+    if randomized:
+        random_jitter = (np.random.rand(*phase.shape) * 2.0 - 1.0) * rand_amt
+        random_jitter = np.where(mask, random_jitter, 0.0)
+        rotation = rotation + random_jitter
+
+    # Apply rotation
+    phase_out = phase_out + rotation
+    # Wrap to [-pi, pi]
+    phase_out = (phase_out + np.pi) % (2.0 * np.pi) - np.pi
+
+    return mag, phase_out
 
 
 def bin_scramble(

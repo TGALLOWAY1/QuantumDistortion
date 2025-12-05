@@ -77,6 +77,50 @@ def test_phase_dispersal_smoke() -> None:
     assert phase_out.dtype == phase.dtype
 
 
+def test_phase_dispersal_preserves_magnitude() -> None:
+    """Test that phase_dispersal preserves magnitude but changes phase."""
+    np.random.seed(42)
+    mag = np.random.rand(1024)
+    phase = np.random.rand(1024) * 2 * np.pi - np.pi
+
+    mag_out, phase_out = phase_dispersal(mag, phase, amount=0.5)
+
+    assert np.allclose(mag, mag_out)
+    assert not np.allclose(phase, phase_out)
+
+
+def test_phase_dispersal_wraps_phase_to_valid_range() -> None:
+    """Test that phase_dispersal wraps phase to [-pi, pi]."""
+    mag = np.ones(1024)
+    phase = np.zeros(1024)
+
+    mag_out, phase_out = phase_dispersal(mag, phase, amount=np.pi)
+
+    assert np.all(phase_out >= -np.pi)
+    assert np.all(phase_out <= np.pi)
+
+
+def test_phase_dispersal_respects_threshold() -> None:
+    """Test that phase_dispersal respects the threshold parameter."""
+    # Create mag such that half < thresh, half > thresh
+    thresh = 0.5
+    mag = np.concatenate([np.linspace(0.0, 0.4, 512), np.linspace(0.6, 1.0, 512)])
+    phase = np.zeros(1024)
+
+    mag_out, phase_out = phase_dispersal(mag, phase, thresh=thresh, amount=1.0)
+
+    below_mask = mag <= thresh
+    above_mask = mag > thresh
+
+    # Bins below threshold should change by at most a tiny epsilon
+    phase_change_below = np.abs(phase_out[below_mask] - phase[below_mask])
+    assert np.all(phase_change_below < 1e-10)
+
+    # Bins above threshold should change more
+    phase_change_above = np.abs(phase_out[above_mask] - phase[above_mask])
+    assert np.all(phase_change_above > 0.1)
+
+
 def test_bin_scramble_smoke() -> None:
     """Smoke test for bin_scramble function."""
     mag = np.linspace(0, 1, 1024)
