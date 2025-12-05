@@ -232,6 +232,7 @@ def _process_single_band(
     limiter_ceiling_db: float,
     dry_wet: float,
     tap_input: np.ndarray,
+    passthrough_test: bool = False,
     timing: Union[RenderTiming, None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
@@ -240,10 +241,85 @@ def _process_single_band(
     This is an internal helper function that processes one band (either full-band
     in single-band mode, or low/high band in multiband mode).
     
+    Args:
+        passthrough_test: If True, bypass all quantization and spectral FX.
+            Performs transparent STFT->ISTFT roundtrip for M10 null test verification.
+            Skips magnitude manipulation, distortion, and limiter.
+    
     Returns:
         (processed_audio, taps_dict)
     """
     n_samples = x_in.shape[0]
+    
+    # =====================================================================
+    # PASSTHROUGH TEST MODE: Transparent STFT->ISTFT roundtrip
+    # Used for M10 null test to verify OLA reconstruction is perfect
+    # =====================================================================
+    if passthrough_test:
+        # Compute STFT
+        stft_start = time.perf_counter()
+        try:
+            S, freqs = stft_mono(
+                x_in,
+                sr=sr,
+                n_fft=N_FFT_DEFAULT,
+                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
+                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+                center=CENTER_DEFAULT,
+            )
+            stft_end = time.perf_counter()
+            if timing is not None:
+                timing.stft = (stft_end - stft_start)
+        except Exception:
+            stft_end = time.perf_counter()
+            if timing is not None:
+                timing.stft = (stft_end - stft_start)
+            raise
+        
+        # Immediate ISTFT reconstruction - no magnitude manipulation
+        # This verifies that OLA STFT/ISTFT roundtrip is transparent
+        istft_start = time.perf_counter()
+        try:
+            x_out = istft_mono(
+                S,
+                sr=sr,
+                n_fft=N_FFT_DEFAULT,
+                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
+                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+                length=n_samples,
+                center=CENTER_DEFAULT,
+            )
+            istft_end = time.perf_counter()
+            if timing is not None:
+                timing.istft = (istft_end - istft_start)
+        except Exception:
+            istft_end = time.perf_counter()
+            if timing is not None:
+                timing.istft = (istft_end - istft_start)
+            raise
+        x_out = x_out.astype(np.float32)
+        
+        # Ensure output length matches input
+        if x_out.shape[0] != n_samples:
+            if x_out.shape[0] > n_samples:
+                x_out = x_out[:n_samples]
+            else:
+                pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
+                x_out = np.concatenate([x_out, pad], axis=0)
+        
+        # Passthrough mode: output should reconstruct exactly the input
+        # No quantization, no distortion, no limiter, no dry/wet mix
+        taps = {
+            "pre_quant": x_in.copy(),  # No quantization applied
+            "post_dist": x_out.copy(),  # No distortion applied
+            "output": x_out.copy(),
+        }
+        
+        return x_out, taps
+    
+    # =====================================================================
+    # NORMAL PROCESSING MODE: Full pipeline with quantization, distortion, etc.
+    # =====================================================================
     
     # =====================================================================
     # SINGLE STFT: Compute STFT once for the entire processing pipeline
@@ -559,6 +635,7 @@ def process_audio(
     use_multiband: bool = False,
     crossover_hz: float = 300.0,
     lowband_drive: float = 1.0,
+    passthrough_test: bool = False,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
@@ -589,6 +666,11 @@ def process_audio(
     lowband_drive : float, optional
         Drive parameter for low-band saturation. Only used when use_multiband=True.
         Higher values increase saturation. Defaults to 1.0.
+    passthrough_test : bool, optional
+        If True, bypass all quantization and spectral FX. Performs transparent
+        STFT->ISTFT roundtrip for M10 null test verification. Skips magnitude
+        manipulation, distortion, and limiter. Output must reconstruct exactly
+        the original high-band input. Defaults to False.
     
     Timing information is logged to stdout at the end of processing, including preview mode status.
     """
@@ -662,6 +744,7 @@ def process_audio(
             
             # High band path: full OLA-compliant STFT pipeline (spectral quantization, etc.)
             # Uses updated OLA STFT/ISTFT from stft_utils.py
+            # In passthrough_test mode, this performs transparent STFT->ISTFT roundtrip
             processed_high, taps_high = _process_single_band(
                 high_aligned,
                 sr=sr,
@@ -678,6 +761,7 @@ def process_audio(
                 limiter_ceiling_db=limiter_ceiling_db,
                 dry_wet=dry_wet,
                 tap_input=high_aligned,  # Use band-specific input for dry/wet mix
+                passthrough_test=passthrough_test,
                 timing=timing,
             )
             
@@ -705,6 +789,7 @@ def process_audio(
             }
         else:
             # Single-band processing (original behavior)
+            # In passthrough_test mode, this performs transparent STFT->ISTFT roundtrip
             x_out, taps_band = _process_single_band(
                 x_in,
                 sr=sr,
@@ -721,6 +806,7 @@ def process_audio(
                 limiter_ceiling_db=limiter_ceiling_db,
                 dry_wet=dry_wet,
                 tap_input=tap_input,
+                passthrough_test=passthrough_test,
                 timing=timing,
             )
             
