@@ -375,14 +375,55 @@ def render_v2_ui() -> None:
                 if audio is None or sr is None:
                     st.error("Please load an audio file first.")
                 else:
-                    # For now, use default parameters from V1 UI
-                    # This will be replaced with V2 controls later
+                    # Get Low Band settings
+                    low_band_settings = st.session_state.get("low_band_settings", {})
+                    crossover_freq = low_band_settings.get("crossover_freq", 300)
+                    saturation_amount = low_band_settings.get("saturation_amount", 0.3)
+                    saturation_type = low_band_settings.get("saturation_type", "Tube")
+                    mono_strength = low_band_settings.get("mono_strength", 1.0)
+                    output_trim_db = low_band_settings.get("output_trim_db", 0)
+                    
+                    # Map saturation_amount to lowband_drive
+                    # saturation_amount 0.0 -> drive 1.0 (no saturation)
+                    # saturation_amount 1.0 -> drive ~5.0 (heavy saturation)
+                    # Linear mapping for now
+                    lowband_drive = 1.0 + (saturation_amount * 4.0)
+                    
+                    # TODO: Wire saturation_type to DSP
+                    # Currently only "Tube" is supported via soft_tube()
+                    # "Clip" mode needs to be implemented in saturation.py
+                    if saturation_type != "Tube":
+                        st.warning(f"Saturation type '{saturation_type}' not yet implemented in DSP. Using Tube mode.")
+                    
+                    # TODO: Wire mono_strength to DSP
+                    # Currently make_mono_lowband() is all-or-nothing
+                    # Need to add strength parameter for partial mono mixing
+                    if mono_strength < 1.0:
+                        st.warning(f"Mono strength {mono_strength} not yet implemented in DSP. Using full mono (1.0).")
+                    
+                    # TODO: Wire low_output_trim_db to DSP
+                    # Currently no per-band output trim in pipeline
+                    # Need to add gain stage after low band processing
+                    if output_trim_db != 0:
+                        st.warning(f"Low band output trim ({output_trim_db} dB) not yet implemented in DSP.")
+                    
+                    # Process with multiband enabled
                     processed, taps = process_audio(
                         audio=audio,
                         sr=sr,
-                        # Using default values for now
+                        use_multiband=True,
+                        crossover_hz=float(crossover_freq),
+                        lowband_drive=float(lowband_drive),
+                        # Using default values for other parameters for now
+                        # TODO: Wire High Band settings when that panel is implemented
                     )
-
+                    
+                    # TODO: Apply low_output_trim_db gain if implemented
+                    # For now, this is a placeholder
+                    # if output_trim_db != 0:
+                    #     gain_lin = 10.0 ** (output_trim_db / 20.0)
+                    #     # Apply to low band only - would need access to low_processed from taps
+                    
                     st.session_state["processed"] = processed
                     st.session_state["taps"] = taps
                     st.success("Processing complete!")
@@ -544,12 +585,89 @@ def render_v2_ui() -> None:
         st.session_state["highlight_low_band"] = False  # Clear flag after showing
     
     with st.expander("Low Band (Body)", expanded=True):
-        st.write("Low band processing controls will be added here.")
-        st.write("This section will include:")
-        st.write("- Crossover frequency settings")
-        st.write("- Low band drive/saturation")
-        st.write("- Low band-specific quantization")
-        st.write("- Low band visualization")
+        # Initialize low band settings in session state if not present
+        if "low_band_settings" not in st.session_state:
+            st.session_state["low_band_settings"] = {
+                "crossover_freq": 300,
+                "saturation_amount": 0.3,
+                "saturation_type": "Tube",
+                "mono_strength": 1.0,
+                "output_trim_db": 0,
+            }
+        
+        # Get current settings
+        settings = st.session_state["low_band_settings"]
+        
+        # Controls layout
+        col_controls, col_viz = st.columns([2, 1], gap="medium")
+        
+        with col_controls:
+            # Crossover Frequency
+            crossover_freq = st.slider(
+                "Crossover Frequency (Hz)",
+                min_value=80,
+                max_value=600,
+                value=settings.get("crossover_freq", 300),
+                step=10,
+            )
+            settings["crossover_freq"] = crossover_freq
+            # Store in session state for reuse in High Band panel
+            st.session_state["crossover_freq"] = crossover_freq
+            
+            # Saturation Amount
+            low_saturation_amount = st.slider(
+                "Saturation Amount",
+                min_value=0.0,
+                max_value=1.0,
+                value=settings.get("saturation_amount", 0.3),
+                step=0.05,
+            )
+            settings["saturation_amount"] = low_saturation_amount
+            
+            # Saturation Type
+            low_saturation_type = st.radio(
+                "Saturation Type",
+                ["Tube", "Clip"],
+                index=0 if settings.get("saturation_type", "Tube") == "Tube" else 1,
+            )
+            settings["saturation_type"] = low_saturation_type
+            
+            # Mono Maker Strength
+            low_mono_strength = st.slider(
+                "Mono Maker Strength",
+                min_value=0.0,
+                max_value=1.0,
+                value=settings.get("mono_strength", 1.0),
+                step=0.1,
+            )
+            settings["mono_strength"] = low_mono_strength
+            
+            # Low Band Output Trim
+            low_output_trim_db = st.slider(
+                "Low Band Output Trim (dB)",
+                min_value=-12,
+                max_value=12,
+                value=settings.get("output_trim_db", 0),
+                step=1,
+            )
+            settings["output_trim_db"] = low_output_trim_db
+            
+            # Update session state
+            st.session_state["low_band_settings"] = settings
+        
+        with col_viz:
+            st.markdown("**Low-Band Preview**")
+            # Micro-visualization placeholder
+            # TODO: Feed actual low-band waveform array after render
+            processed = st.session_state.get("processed")
+            if processed is not None:
+                # Placeholder: show empty chart for now
+                # Future: extract low band from taps and display waveform
+                st.line_chart([])
+                st.caption("Low-band waveform preview (future)")
+            else:
+                st.info("Render audio to see low-band preview")
+                st.line_chart([])
 
     # ===========================
     # High Band (Texture) Section
