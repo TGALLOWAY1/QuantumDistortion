@@ -46,7 +46,35 @@ def bitcrush(
     mag_out, phase_out : np.ndarray, np.ndarray
         Processed magnitude and phase. Phase is typically unchanged.
     """
-    return mag, phase
+    eps = 1e-12
+    mag = np.asarray(mag, dtype=float).copy()
+    phase = np.asarray(phase, dtype=float)
+
+    # Ensure non-negative magnitudes
+    mag = np.clip(mag, 0.0, None)
+
+    if method == "uniform":
+        if step <= 0:
+            mag_out = mag.copy()
+        else:
+            mag_out = np.round(mag / step) * step
+            mag_out = np.clip(mag_out, 0.0, None)
+    elif method == "log":
+        if step_db <= 0:
+            mag_out = mag.copy()
+        else:
+            mag_db = 20.0 * np.log10(np.clip(mag, eps, None))
+            mag_db_q = np.round(mag_db / step_db) * step_db
+            mag_out = 10.0 ** (mag_db_q / 20.0)
+    else:
+        # Unknown method, return unchanged
+        mag_out = mag.copy()
+
+    # Apply threshold if specified
+    if threshold is not None and threshold > 0.0:
+        mag_out = np.where(mag_out < threshold, 0.0, mag_out)
+
+    return mag_out, phase
 
 
 def phase_dispersal(

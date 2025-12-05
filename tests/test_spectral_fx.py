@@ -20,6 +20,50 @@ def test_bitcrush_smoke() -> None:
     assert phase_out.dtype == phase.dtype
 
 
+def test_bitcrush_uniform_reduces_resolution() -> None:
+    """Test that uniform bitcrush reduces resolution."""
+    mag = np.linspace(0.0, 1.0, 1024)
+    phase = np.zeros_like(mag)
+
+    mag_q, phase_q = bitcrush(mag, phase, method="uniform", step=0.1)
+
+    assert mag_q.shape == mag.shape
+    assert phase_q.shape == phase.shape
+    assert np.all(mag_q >= 0.0)
+
+    # Check that quantization reduces unique values
+    mag_q_unique = np.unique(np.round(mag_q, 3)).size
+    assert 0 < mag_q_unique < mag.size
+
+
+def test_bitcrush_log_preserves_monotonicity() -> None:
+    """Test that log bitcrush preserves monotonicity."""
+    mag = np.linspace(0.0, 1.0, 1024)
+    phase = np.zeros_like(mag)
+
+    mag_q, phase_q = bitcrush(mag, phase, method="log", step_db=3.0)
+
+    # Check no crazy negative jumps (allow small numerical errors)
+    assert np.all(np.diff(mag_q) >= -1e-6)
+
+    # Check energy is within reasonable bounds
+    assert np.sum(mag_q) <= np.sum(mag) * 1.05
+
+
+def test_bitcrush_threshold_zeroes_small_bins() -> None:
+    """Test that threshold zeroes bins below threshold."""
+    # Create mag with some values below 0.1
+    mag = np.array([0.05, 0.15, 0.08, 0.25, 0.03, 0.12, 0.20])
+    phase = np.zeros_like(mag)
+
+    mag_q, phase_q = bitcrush(mag, phase, threshold=0.1)
+
+    # All bins < 0.1 should be zero
+    assert np.all(mag_q[mag < 0.1] == 0.0)
+    # Bins >= 0.1 should be preserved (or quantized but not zeroed)
+    assert np.all(mag_q[mag >= 0.1] > 0.0)
+
+
 def test_phase_dispersal_smoke() -> None:
     """Smoke test for phase_dispersal function."""
     mag = np.linspace(0, 1, 1024)
