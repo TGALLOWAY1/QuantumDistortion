@@ -424,13 +424,125 @@ def render_v2_ui() -> None:
     # ===========================
     with st.container():
         st.subheader("Signal Flow Overview")
-        st.info("Coming soon: interactive diagram showing Input → Low Band / High Band → Creative Quantum FX → Output")
+        
+        # Block diagram using columns and markdown
+        col1, col2, col3, col4, col5 = st.columns([1.2, 1, 1.2, 1, 1.2], gap="small")
+        
+        with col1:
+            st.markdown("""
+            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #1f77b4;">
+                <strong>🎵 Input</strong><br>
+                <small>Audio Signal</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div style="text-align: center; padding: 10px;">
+                <strong>→</strong>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #ff7f0e;">
+                <strong>🎚 Split Band</strong><br>
+                <small>Linkwitz-Riley<br>Crossover</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown("""
+            <div style="text-align: center; padding: 10px;">
+                <strong>→</strong>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col5:
+            st.markdown("""
+            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #2ca02c;">
+                <strong>🎛 Mixer</strong><br>
+                <small>Recombine</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Two paths below the split
+        col_path1, col_path2 = st.columns(2, gap="medium")
+        
+        with col_path1:
+            st.markdown("""
+            <div style="text-align: center; padding: 10px;">
+                <strong>↓</strong>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown("""
+            <div style="text-align: center; padding: 15px; background-color: #e8f4f8; border-radius: 8px; border: 2px solid #1f77b4;">
+                <strong>🔊 Low Path (Body)</strong><br>
+                <small>Time Domain</small><br>
+                <small style="color: #666;">Saturation + Mono</small>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("📍 Go to Low Band Panel", key="goto_low", use_container_width=True):
+                st.session_state["highlight_low_band"] = True
+                st.rerun()
+        
+        with col_path2:
+            st.markdown("""
+            <div style="text-align: center; padding: 10px;">
+                <strong>↓</strong>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown("""
+            <div style="text-align: center; padding: 15px; background-color: #fff4e6; border-radius: 8px; border: 2px solid #ff7f0e;">
+                <strong>✨ High Path (Texture)</strong><br>
+                <small>Spectral Quantum</small><br>
+                <small style="color: #666;">STFT Pipeline</small>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("📍 Go to High Band Panel", key="goto_high", use_container_width=True):
+                st.session_state["highlight_high_band"] = True
+                st.rerun()
+        
+        # Final output
+        st.markdown("""
+        <div style="text-align: center; padding: 10px;">
+            <strong>↓</strong>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col_out1, col_out2, col_out3 = st.columns([1, 1, 1])
+        with col_out2:
+            st.markdown("""
+            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #2ca02c;">
+                <strong>🎧 Output</strong><br>
+                <small>Processed Audio</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Explanatory text
+        st.markdown("""
+        <div style="margin-top: 20px; padding: 15px; background-color: #f9f9f9; border-radius: 8px; border-left: 4px solid #1f77b4;">
+            <p style="margin: 0;"><strong>Architecture Overview:</strong></p>
+            <p style="margin: 5px 0 0 0; color: #555;">
+                The multiband architecture splits audio at a crossover frequency (typically 300 Hz). 
+                The <strong>low band (body)</strong> is processed entirely in the <strong>time domain</strong> using saturation 
+                and mono-making for optimal transient response. The <strong>high band (texture)</strong> uses the 
+                <strong>spectral quantum pipeline</strong> with STFT-based quantization, distortion, and creative FX 
+                for harmonic shaping. Both paths are then recombined at the mixer stage.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("---")
 
     # ===========================
     # Low Band (Body) Section
     # ===========================
+    # Show highlight if navigated from Signal Flow Overview
+    if st.session_state.get("highlight_low_band", False):
+        st.info("📍 **Low Band (Body) Panel** - Time-domain processing for bass frequencies")
+        st.session_state["highlight_low_band"] = False  # Clear flag after showing
+    
     with st.expander("Low Band (Body)", expanded=True):
         st.write("Low band processing controls will be added here.")
         st.write("This section will include:")
@@ -442,6 +554,11 @@ def render_v2_ui() -> None:
     # ===========================
     # High Band (Texture) Section
     # ===========================
+    # Show highlight if navigated from Signal Flow Overview
+    if st.session_state.get("highlight_high_band", False):
+        st.info("📍 **High Band (Texture) Panel** - Spectral quantum pipeline for harmonic shaping")
+        st.session_state["highlight_high_band"] = False  # Clear flag after showing
+    
     with st.expander("High Band (Texture)", expanded=True):
         st.write("High band processing controls will be added here.")
         st.write("This section will include:")
