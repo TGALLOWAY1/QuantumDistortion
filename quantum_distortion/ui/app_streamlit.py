@@ -412,6 +412,7 @@ def render_v2_ui() -> None:
     # Top Bar — File Upload, Render, Delta Toggle
     # ===========================
     with st.container():
+        st.markdown("### 🎛 Transport")
         col_upload, col_render, col_delta = st.columns([3, 2, 1], gap="medium")
 
         with col_upload:
@@ -513,57 +514,59 @@ def render_v2_ui() -> None:
             st.session_state["delta_listen"] = delta_listen
 
     # Audio playback section
-    audio = st.session_state.get("audio")
-    sr = st.session_state.get("sr")
-    processed = st.session_state.get("processed")
-    delta_listen = st.session_state.get("delta_listen", False)
+    with st.container():
+        st.markdown("### 🎧 Playback")
+        audio = st.session_state.get("audio")
+        sr = st.session_state.get("sr")
+        processed = st.session_state.get("processed")
+        delta_listen = st.session_state.get("delta_listen", False)
 
-    if audio is not None and sr is not None:
-        col_orig, col_proc = st.columns(2, gap="medium")
-        with col_orig:
-            st.markdown("**Original Audio**")
-            st.audio(_audio_to_wav_bytes(audio, sr), format="audio/wav")
-        with col_proc:
-            if processed is not None:
-                # Determine what to play based on delta_listen setting
-                if delta_listen:
-                    # Compute delta if not already computed
-                    delta = st.session_state.get("delta")
-                    if delta is None:
-                        # Compute delta on the fly
-                        min_len = min(len(audio), len(processed))
-                        delta = processed[:min_len] - audio[:min_len]
-                        st.session_state["delta"] = delta
-                    
-                    st.markdown("**Delta Signal (Differences Only)**")
-                    st.audio(_audio_to_wav_bytes(delta, sr), format="audio/wav")
-                    dl_bytes = _audio_to_wav_bytes(delta, sr)
-                    st.download_button(
-                        "Download Delta WAV",
-                        data=dl_bytes,
-                        file_name="quantum_distortion_delta.wav",
-                        mime="audio/wav",
-                    )
+        if audio is not None and sr is not None:
+            col_orig, col_proc = st.columns(2, gap="medium")
+            with col_orig:
+                st.markdown("**Original Audio**")
+                st.audio(_audio_to_wav_bytes(audio, sr), format="audio/wav")
+            with col_proc:
+                if processed is not None:
+                    # Determine what to play based on delta_listen setting
+                    if delta_listen:
+                        # Compute delta if not already computed
+                        delta = st.session_state.get("delta")
+                        if delta is None:
+                            # Compute delta on the fly
+                            min_len = min(len(audio), len(processed))
+                            delta = processed[:min_len] - audio[:min_len]
+                            st.session_state["delta"] = delta
+                        
+                        st.markdown("**Delta Signal (Differences Only)**")
+                        st.audio(_audio_to_wav_bytes(delta, sr), format="audio/wav")
+                        dl_bytes = _audio_to_wav_bytes(delta, sr)
+                        st.download_button(
+                            "Download Delta WAV",
+                            data=dl_bytes,
+                            file_name="quantum_distortion_delta.wav",
+                            mime="audio/wav",
+                        )
+                    else:
+                        st.markdown("**Processed Audio**")
+                        st.audio(_audio_to_wav_bytes(processed, sr), format="audio/wav")
+                        dl_bytes = _audio_to_wav_bytes(processed, sr)
+                        st.download_button(
+                            "Download Processed WAV",
+                            data=dl_bytes,
+                            file_name="quantum_distortion_processed.wav",
+                            mime="audio/wav",
+                        )
                 else:
-                    st.markdown("**Processed Audio**")
-                    st.audio(_audio_to_wav_bytes(processed, sr), format="audio/wav")
-                    dl_bytes = _audio_to_wav_bytes(processed, sr)
-                    st.download_button(
-                        "Download Processed WAV",
-                        data=dl_bytes,
-                        file_name="quantum_distortion_processed.wav",
-                        mime="audio/wav",
-                    )
-            else:
-                st.info("Click Render to process audio.")
-
+                    st.info("Click Render to process audio.")
+    
     st.markdown("---")
 
     # ===========================
     # Signal Flow Overview
     # ===========================
     with st.container():
-        st.subheader("Signal Flow Overview")
+        st.subheader("📊 Signal Flow Overview")
         
         # Block diagram using columns and markdown
         col1, col2, col3, col4, col5 = st.columns([1.2, 1, 1.2, 1, 1.2], gap="small")
@@ -683,7 +686,11 @@ def render_v2_ui() -> None:
         st.info("📍 **Low Band (Body) Panel** - Time-domain processing for bass frequencies")
         st.session_state["highlight_low_band"] = False  # Clear flag after showing
     
-    with st.expander("Low Band (Body)", expanded=True):
+    with st.container():
+        st.subheader("🦴 Low Band (Body)")
+        st.caption("Sub weight & punch (time-domain).")
+    
+    with st.expander("🦴 Low Band (Body)", expanded=True):
         # Initialize low band settings in session state if not present
         if "low_band_settings" not in st.session_state:
             st.session_state["low_band_settings"] = {
@@ -697,10 +704,10 @@ def render_v2_ui() -> None:
         # Get current settings
         settings = st.session_state["low_band_settings"]
         
-        # Controls layout
-        col_controls, col_viz = st.columns([2, 1], gap="medium")
+        # Controls layout - use columns for better organization
+        col_left, col_right = st.columns(2, gap="medium")
         
-        with col_controls:
+        with col_left:
             # Crossover Frequency
             crossover_freq = st.slider(
                 "Crossover Frequency (Hz)",
@@ -728,9 +735,11 @@ def render_v2_ui() -> None:
                 "Saturation Type",
                 ["Tube", "Clip"],
                 index=0 if settings.get("saturation_type", "Tube") == "Tube" else 1,
+                horizontal=True,
             )
             settings["saturation_type"] = low_saturation_type
-            
+        
+        with col_right:
             # Mono Maker Strength
             low_mono_strength = st.slider(
                 "Mono Maker Strength",
@@ -743,7 +752,7 @@ def render_v2_ui() -> None:
             
             # Low Band Output Trim
             low_output_trim_db = st.slider(
-                "Low Band Output Trim (dB)",
+                "Output Trim (dB)",
                 min_value=-12,
                 max_value=12,
                 value=settings.get("output_trim_db", 0),
@@ -753,20 +762,8 @@ def render_v2_ui() -> None:
             
             # Update session state
             st.session_state["low_band_settings"] = settings
-        
-        with col_viz:
-            st.markdown("**Low-Band Preview**")
-            # Micro-visualization placeholder
-            # TODO: Feed actual low-band waveform array after render
-            processed = st.session_state.get("processed")
-            if processed is not None:
-                # Placeholder: show empty chart for now
-                # Future: extract low band from taps and display waveform
-                st.line_chart([])
-                st.caption("Low-band waveform preview (future)")
-            else:
-                st.info("Render audio to see low-band preview")
-                st.line_chart([])
+    
+    st.markdown("---")
 
     # ===========================
     # High Band (Texture) Section
@@ -776,7 +773,11 @@ def render_v2_ui() -> None:
         st.info("📍 **High Band (Texture) Panel** - Spectral quantum pipeline for harmonic shaping")
         st.session_state["highlight_high_band"] = False  # Clear flag after showing
     
-    with st.expander("High Band (Texture)", expanded=True):
+    with st.container():
+        st.subheader("⚡ High Band (Texture)")
+        st.caption("Texture & character (spectral domain).")
+    
+    with st.expander("⚡ High Band (Texture)", expanded=True):
         # Initialize high band settings in session state if not present
         if "high_band_settings" not in st.session_state:
             st.session_state["high_band_settings"] = {
@@ -792,11 +793,10 @@ def render_v2_ui() -> None:
         # Get current settings
         settings = st.session_state["high_band_settings"]
         
-        # Controls layout
-        col_controls, col_viz = st.columns([2, 1], gap="medium")
+        # Controls layout - organized in columns
+        col_stft, col_fx = st.columns(2, gap="medium")
         
-        with col_controls:
-            # STFT Settings
+        with col_stft:
             st.markdown("**STFT Settings**")
             fft_options = [512, 1024, 2048, 4096]
             current_fft = settings.get("fft_size", 2048)
@@ -824,10 +824,8 @@ def render_v2_ui() -> None:
                 index=precision_index,
             )
             settings["precision_mode"] = precision_mode
-            
-            st.markdown("---")
-            
-            # Spectral Distortion
+        
+        with col_fx:
             st.markdown("**Spectral Distortion**")
             mag_decimation = st.slider(
                 "Magnitude Decimation",
@@ -848,7 +846,7 @@ def render_v2_ui() -> None:
             settings["phase_dispersal"] = phase_dispersal
             
             bin_scrambling = st.slider(
-                "Bin Scrambling Intensity",
+                "Bin Scrambling",
                 min_value=0.0,
                 max_value=1.0,
                 value=settings.get("bin_scrambling", 0.2),
@@ -857,32 +855,25 @@ def render_v2_ui() -> None:
             settings["bin_scrambling"] = bin_scrambling
             
             high_output_trim_db = st.slider(
-                "High Band Output Trim (dB)",
+                "Output Trim (dB)",
                 min_value=-12,
                 max_value=12,
                 value=settings.get("output_trim_db", 0),
                 step=1,
             )
             settings["output_trim_db"] = high_output_trim_db
-            
-            # Update session state
-            st.session_state["high_band_settings"] = settings
         
-        with col_viz:
-            st.markdown("**High-Band Spectrogram**")
-            # Placeholder spectrogram visualization
-            # TODO: Feed actual high-band spectrogram array after render
-            processed = st.session_state.get("processed")
-            if processed is not None:
-                st.info("High-band spectrogram (will update after render)")
-                # Future: display actual spectrogram using stft data from taps
-            else:
-                st.info("Render audio to see high-band spectrogram")
+        # Update session state
+        st.session_state["high_band_settings"] = settings
 
     # ===========================
     # Creative Quantum FX Section
     # ===========================
-    with st.expander("Creative Quantum FX", expanded=True):
+    with st.container():
+        st.subheader("🧪 Creative Quantum FX")
+        st.caption("Experimental quantum-style transformations.")
+    
+    with st.expander("🧪 Creative Quantum FX", expanded=True):
         # Initialize quantum FX settings in session state if not present
         if "quantum_fx_settings" not in st.session_state:
             st.session_state["quantum_fx_settings"] = {
@@ -895,66 +886,72 @@ def render_v2_ui() -> None:
         # Get current settings
         settings = st.session_state["quantum_fx_settings"]
         
-        # Controls
-        spectral_freeze = st.checkbox(
-            "Spectral Freeze (hold current texture)",
-            value=settings.get("spectral_freeze", False),
-        )
-        settings["spectral_freeze"] = spectral_freeze
+        # Controls - organized in columns
+        col_fx1, col_fx2 = st.columns(2, gap="medium")
         
-        formant_shift = st.slider(
-            "Formant Shift (%)",
-            min_value=-100,
-            max_value=100,
-            value=settings.get("formant_shift", 0),
-            step=5,
-        )
-        settings["formant_shift"] = formant_shift
-        
-        harmonic_lock_options = ["Off", "F#1", "G1", "A#1", "Custom"]
-        current_lock_mode = settings.get("harmonic_lock_mode", "Off")
-        lock_index = harmonic_lock_options.index(current_lock_mode) if current_lock_mode in harmonic_lock_options else 0
-        harmonic_lock_mode = st.selectbox(
-            "Harmonic Locking",
-            harmonic_lock_options,
-            index=lock_index,
-        )
-        settings["harmonic_lock_mode"] = harmonic_lock_mode
-        
-        # Custom fundamental input (only shown if "Custom" is selected)
-        custom_fundamental_hz = None
-        if harmonic_lock_mode == "Custom":
-            custom_fundamental_hz = st.number_input(
-                "Custom Fundamental (Hz)",
-                min_value=20.0,
-                max_value=2000.0,
-                value=float(settings.get("custom_fundamental_hz", 55.0)),
-                step=1.0,
+        with col_fx1:
+            spectral_freeze = st.checkbox(
+                "Spectral Freeze",
+                value=settings.get("spectral_freeze", False),
+                help="Hold current texture (not yet implemented)",
             )
-            settings["custom_fundamental_hz"] = custom_fundamental_hz
-        else:
-            settings["custom_fundamental_hz"] = None
+            settings["spectral_freeze"] = spectral_freeze
+            
+            formant_shift = st.slider(
+                "Formant Shift (%)",
+                min_value=-100,
+                max_value=100,
+                value=settings.get("formant_shift", 0),
+                step=5,
+            )
+            settings["formant_shift"] = formant_shift
+        
+        with col_fx2:
+            harmonic_lock_options = ["Off", "F#1", "G1", "A#1", "Custom"]
+            current_lock_mode = settings.get("harmonic_lock_mode", "Off")
+            lock_index = harmonic_lock_options.index(current_lock_mode) if current_lock_mode in harmonic_lock_options else 0
+            harmonic_lock_mode = st.selectbox(
+                "Harmonic Locking",
+                harmonic_lock_options,
+                index=lock_index,
+            )
+            settings["harmonic_lock_mode"] = harmonic_lock_mode
+            
+            # Custom fundamental input (only shown if "Custom" is selected)
+            custom_fundamental_hz = None
+            if harmonic_lock_mode == "Custom":
+                custom_fundamental_hz = st.number_input(
+                    "Custom Fundamental (Hz)",
+                    min_value=20.0,
+                    max_value=2000.0,
+                    value=float(settings.get("custom_fundamental_hz", 55.0)),
+                    step=1.0,
+                )
+                settings["custom_fundamental_hz"] = custom_fundamental_hz
+            else:
+                settings["custom_fundamental_hz"] = None
         
         # Update session state
         st.session_state["quantum_fx_settings"] = settings
         
         # Explanatory text
-        st.markdown("---")
-        st.markdown("""
-        <div style="padding: 10px; background-color: #f9f9f9; border-radius: 5px; font-size: 0.9em;">
-            <p style="margin: 5px 0;"><strong>💡 What do these do?</strong></p>
-            <ul style="margin: 5px 0; padding-left: 20px;">
-                <li><strong>Spectral Freeze:</strong> Captures and holds the current spectral texture, creating a sustained "frozen" harmonic character. Perfect for creating evolving pads or glitchy stutter effects.</li>
-                <li><strong>Formant Shift:</strong> Shifts the formant frequencies (vocal character) up or down without changing pitch. Positive values add brightness and presence, negative values add warmth and body.</li>
-                <li><strong>Harmonic Locking:</strong> Forces the spectrum to lock onto specific fundamental frequencies (F#1, G1, A#1, or custom). This creates a strong harmonic foundation, useful for bass design and pitch-stable textures.</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
+        with st.expander("💡 What do these do?", expanded=False):
+            st.markdown("""
+            - **Spectral Freeze:** Captures and holds the current spectral texture, creating a sustained "frozen" harmonic character. Perfect for evolving pads or glitchy stutter effects.
+            - **Formant Shift:** Shifts formant frequencies (vocal character) up or down without changing pitch. Positive values add brightness, negative values add warmth.
+            - **Harmonic Locking:** Forces the spectrum to lock onto specific fundamental frequencies. Creates a strong harmonic foundation for bass design.
+            """)
+    
+    st.markdown("---")
 
     # ===========================
     # Analysis Tools Section
     # ===========================
-    with st.expander("Analysis Tools", expanded=False):
+    with st.container():
+        st.subheader("🔬 Analysis Tools")
+        st.caption("Verification and Delta listening.")
+    
+    with st.expander("🔬 Analysis Tools", expanded=False):
         audio = st.session_state.get("audio")
         processed = st.session_state.get("processed")
         sr = st.session_state.get("sr")
