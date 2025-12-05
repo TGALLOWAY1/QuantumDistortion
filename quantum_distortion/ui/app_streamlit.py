@@ -1,3 +1,26 @@
+"""
+Streamlit entrypoint for Quantum Distortion UI.
+
+This module provides the MVP slider-based interface for the Quantum Distortion
+DSP prototype. It allows users to upload audio files, configure quantization
+and distortion parameters, process audio through the pipeline, and visualize
+results at various tap points.
+
+Key Components:
+- Audio loading via file uploader widget (WAV/AIF/AIFF)
+- Parameter controls for quantization, distortion, and output settings
+- Render button triggers process_audio() from quantum_distortion.dsp.pipeline
+- Analysis panel with spectrum, oscilloscope, and phase scope visualizations
+- Session state management to preserve render results across UI interactions
+
+The app uses a single-page layout with 5 main panels:
+1. File & Transport - file upload and audio playback
+2. Quantization Settings - key, scale, snap strength, smear, etc.
+3. Distortion - wavefold or soft tube mode with respective parameters
+4. Output - limiter, dry/wet mix, output gain
+5. Analysis & Visualization - tap point selection and visualization types
+"""
+
 from __future__ import annotations
 
 
