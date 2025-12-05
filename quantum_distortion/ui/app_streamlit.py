@@ -567,43 +567,44 @@ def render_v2_ui() -> None:
         st.subheader("📊 Signal Flow Overview")
         
         # Block diagram using columns and markdown
+        # Using dark theme colors that work with Streamlit's default theme
         col1, col2, col3, col4, col5 = st.columns([1.2, 1, 1.2, 1, 1.2], gap="small")
         
         with col1:
             st.markdown("""
-            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #1f77b4;">
+            <div style="text-align: center; padding: 15px; background-color: #1e1e1e; border-radius: 8px; border: 2px solid #4a9eff; color: #ffffff;">
                 <strong>🎵 Input</strong><br>
-                <small>Audio Signal</small>
+                <small style="color: #cccccc;">Audio Signal</small>
             </div>
             """, unsafe_allow_html=True)
         
         with col2:
             st.markdown("""
-            <div style="text-align: center; padding: 10px;">
+            <div style="text-align: center; padding: 10px; color: #ffffff;">
                 <strong>→</strong>
             </div>
             """, unsafe_allow_html=True)
         
         with col3:
             st.markdown("""
-            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #ff7f0e;">
+            <div style="text-align: center; padding: 15px; background-color: #1e1e1e; border-radius: 8px; border: 2px solid #ffa500; color: #ffffff;">
                 <strong>🎚 Split Band</strong><br>
-                <small>Linkwitz-Riley<br>Crossover</small>
+                <small style="color: #cccccc;">Linkwitz-Riley<br>Crossover</small>
             </div>
             """, unsafe_allow_html=True)
         
         with col4:
             st.markdown("""
-            <div style="text-align: center; padding: 10px;">
+            <div style="text-align: center; padding: 10px; color: #ffffff;">
                 <strong>→</strong>
             </div>
             """, unsafe_allow_html=True)
         
         with col5:
             st.markdown("""
-            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #2ca02c;">
+            <div style="text-align: center; padding: 15px; background-color: #1e1e1e; border-radius: 8px; border: 2px solid #4caf50; color: #ffffff;">
                 <strong>🎛 Mixer</strong><br>
-                <small>Recombine</small>
+                <small style="color: #cccccc;">Recombine</small>
             </div>
             """, unsafe_allow_html=True)
         
@@ -612,15 +613,15 @@ def render_v2_ui() -> None:
         
         with col_path1:
             st.markdown("""
-            <div style="text-align: center; padding: 10px;">
+            <div style="text-align: center; padding: 10px; color: #ffffff;">
                 <strong>↓</strong>
             </div>
             """, unsafe_allow_html=True)
             st.markdown("""
-            <div style="text-align: center; padding: 15px; background-color: #e8f4f8; border-radius: 8px; border: 2px solid #1f77b4;">
+            <div style="text-align: center; padding: 15px; background-color: #1e1e1e; border-radius: 8px; border: 2px solid #4a9eff; color: #ffffff;">
                 <strong>🔊 Low Path (Body)</strong><br>
-                <small>Time Domain</small><br>
-                <small style="color: #666;">Saturation + Mono</small>
+                <small style="color: #cccccc;">Time Domain</small><br>
+                <small style="color: #999999;">Saturation + Mono</small>
             </div>
             """, unsafe_allow_html=True)
             if st.button("📍 Go to Low Band Panel", key="goto_low", use_container_width=True):
@@ -629,15 +630,15 @@ def render_v2_ui() -> None:
         
         with col_path2:
             st.markdown("""
-            <div style="text-align: center; padding: 10px;">
+            <div style="text-align: center; padding: 10px; color: #ffffff;">
                 <strong>↓</strong>
             </div>
             """, unsafe_allow_html=True)
             st.markdown("""
-            <div style="text-align: center; padding: 15px; background-color: #fff4e6; border-radius: 8px; border: 2px solid #ff7f0e;">
+            <div style="text-align: center; padding: 15px; background-color: #1e1e1e; border-radius: 8px; border: 2px solid #ffa500; color: #ffffff;">
                 <strong>✨ High Path (Texture)</strong><br>
-                <small>Spectral Quantum</small><br>
-                <small style="color: #666;">STFT Pipeline</small>
+                <small style="color: #cccccc;">Spectral Quantum</small><br>
+                <small style="color: #999999;">STFT Pipeline</small>
             </div>
             """, unsafe_allow_html=True)
             if st.button("📍 Go to High Band Panel", key="goto_high", use_container_width=True):
@@ -646,7 +647,7 @@ def render_v2_ui() -> None:
         
         # Final output
         st.markdown("""
-        <div style="text-align: center; padding: 10px;">
+        <div style="text-align: center; padding: 10px; color: #ffffff;">
             <strong>↓</strong>
         </div>
         """, unsafe_allow_html=True)
@@ -654,21 +655,21 @@ def render_v2_ui() -> None:
         col_out1, col_out2, col_out3 = st.columns([1, 1, 1])
         with col_out2:
             st.markdown("""
-            <div style="text-align: center; padding: 15px; background-color: #f0f2f6; border-radius: 8px; border: 2px solid #2ca02c;">
+            <div style="text-align: center; padding: 15px; background-color: #1e1e1e; border-radius: 8px; border: 2px solid #4caf50; color: #ffffff;">
                 <strong>🎧 Output</strong><br>
-                <small>Processed Audio</small>
+                <small style="color: #cccccc;">Processed Audio</small>
             </div>
             """, unsafe_allow_html=True)
         
-        # Explanatory text
+        # Explanatory text - dark theme compatible
         st.markdown("""
-        <div style="margin-top: 20px; padding: 15px; background-color: #f9f9f9; border-radius: 8px; border-left: 4px solid #1f77b4;">
-            <p style="margin: 0;"><strong>Architecture Overview:</strong></p>
-            <p style="margin: 5px 0 0 0; color: #555;">
+        <div style="margin-top: 20px; padding: 15px; background-color: #262730; border-radius: 8px; border-left: 4px solid #4a9eff; color: #ffffff;">
+            <p style="margin: 0; color: #ffffff;"><strong>Architecture Overview:</strong></p>
+            <p style="margin: 5px 0 0 0; color: #cccccc;">
                 The multiband architecture splits audio at a crossover frequency (typically 300 Hz). 
-                The <strong>low band (body)</strong> is processed entirely in the <strong>time domain</strong> using saturation 
-                and mono-making for optimal transient response. The <strong>high band (texture)</strong> uses the 
-                <strong>spectral quantum pipeline</strong> with STFT-based quantization, distortion, and creative FX 
+                The <strong style="color: #ffffff;">low band (body)</strong> is processed entirely in the <strong style="color: #ffffff;">time domain</strong> using saturation 
+                and mono-making for optimal transient response. The <strong style="color: #ffffff;">high band (texture)</strong> uses the 
+                <strong style="color: #ffffff;">spectral quantum pipeline</strong> with STFT-based quantization, distortion, and creative FX 
                 for harmonic shaping. Both paths are then recombined at the mixer stage.
             </p>
         </div>
