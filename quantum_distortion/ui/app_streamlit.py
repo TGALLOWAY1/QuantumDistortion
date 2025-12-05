@@ -520,18 +520,29 @@ def render_v2_ui() -> None:
                     
                     st.session_state["processed"] = processed
                     st.session_state["taps"] = taps
+                    
+                    # Compute and store delta for analysis
+                    min_len = min(len(audio), len(processed))
+                    delta = processed[:min_len] - audio[:min_len]
+                    st.session_state["delta"] = delta
+                    
                     st.success("Processing complete!")
 
         with col_delta:
             st.markdown("<br>", unsafe_allow_html=True)  # Vertical spacing
-            listen_to_delta = st.checkbox("Listen to Delta", value=False)
-            # Store in session state for future use
-            st.session_state["listen_to_delta"] = listen_to_delta
+            delta_listen = st.checkbox(
+                "Listen to Delta (differences only)",
+                value=st.session_state.get("delta_listen", False),
+                key="delta_listen_top",
+            )
+            # Store in session state
+            st.session_state["delta_listen"] = delta_listen
 
     # Audio playback section
     audio = st.session_state.get("audio")
     sr = st.session_state.get("sr")
     processed = st.session_state.get("processed")
+    delta_listen = st.session_state.get("delta_listen", False)
 
     if audio is not None and sr is not None:
         col_orig, col_proc = st.columns(2, gap="medium")
@@ -540,15 +551,35 @@ def render_v2_ui() -> None:
             st.audio(_audio_to_wav_bytes(audio, sr), format="audio/wav")
         with col_proc:
             if processed is not None:
-                st.markdown("**Processed Audio**")
-                st.audio(_audio_to_wav_bytes(processed, sr), format="audio/wav")
-                dl_bytes = _audio_to_wav_bytes(processed, sr)
-                st.download_button(
-                    "Download Processed WAV",
-                    data=dl_bytes,
-                    file_name="quantum_distortion_processed.wav",
-                    mime="audio/wav",
-                )
+                # Determine what to play based on delta_listen setting
+                if delta_listen:
+                    # Compute delta if not already computed
+                    delta = st.session_state.get("delta")
+                    if delta is None:
+                        # Compute delta on the fly
+                        min_len = min(len(audio), len(processed))
+                        delta = processed[:min_len] - audio[:min_len]
+                        st.session_state["delta"] = delta
+                    
+                    st.markdown("**Delta Signal (Differences Only)**")
+                    st.audio(_audio_to_wav_bytes(delta, sr), format="audio/wav")
+                    dl_bytes = _audio_to_wav_bytes(delta, sr)
+                    st.download_button(
+                        "Download Delta WAV",
+                        data=dl_bytes,
+                        file_name="quantum_distortion_delta.wav",
+                        mime="audio/wav",
+                    )
+                else:
+                    st.markdown("**Processed Audio**")
+                    st.audio(_audio_to_wav_bytes(processed, sr), format="audio/wav")
+                    dl_bytes = _audio_to_wav_bytes(processed, sr)
+                    st.download_button(
+                        "Download Processed WAV",
+                        data=dl_bytes,
+                        file_name="quantum_distortion_processed.wav",
+                        mime="audio/wav",
+                    )
             else:
                 st.info("Click Render to process audio.")
 
@@ -950,18 +981,63 @@ def render_v2_ui() -> None:
     # Analysis Tools Section
     # ===========================
     with st.expander("Analysis Tools", expanded=False):
-        st.write("Enhanced analysis and visualization tools will be added here.")
-        st.write("This section will include:")
-        st.write("- Delta visualization (before/after comparison)")
-        st.write("- Spectrogram views")
-        st.write("- Multi-tap comparison")
-        st.write("- Export options")
-
-        # Show basic info if processing has been done
+        audio = st.session_state.get("audio")
         processed = st.session_state.get("processed")
-        taps = st.session_state.get("taps")
-        if processed is not None and taps is not None:
-            st.success("Analysis data available. Full visualization tools coming soon.")
+        sr = st.session_state.get("sr")
+        
+        if audio is None or processed is None or sr is None:
+            st.info("Render audio to enable analysis tools.")
+        else:
+            # Compute delta = output - input
+            # Ensure both signals are the same length
+            min_len = min(len(audio), len(processed))
+            audio_aligned = audio[:min_len]
+            processed_aligned = processed[:min_len]
+            delta = processed_aligned - audio_aligned
+            
+            # Compute summary statistics
+            delta_peak = np.max(np.abs(delta))
+            delta_peak_db = 20.0 * np.log10(delta_peak) if delta_peak > 0.0 else float('-inf')
+            delta_rms = np.sqrt(np.mean(delta ** 2))
+            delta_rms_db = 20.0 * np.log10(delta_rms) if delta_rms > 0.0 else float('-inf')
+            delta_length_samples = len(delta)
+            delta_length_seconds = delta_length_samples / float(sr)
+            
+            # Store delta in session state for playback/download
+            st.session_state["delta"] = delta
+            
+            # Summary section
+            st.markdown("### Delta Signal Summary")
+            col_sum1, col_sum2 = st.columns(2)
+            with col_sum1:
+                st.metric("Length", f"{delta_length_seconds:.2f} s ({delta_length_samples:,} samples)")
+                st.metric("Peak Level", f"{delta_peak_db:.2f} dB" if delta_peak_db > float('-inf') else "-∞ dB")
+            with col_sum2:
+                st.metric("RMS Level", f"{delta_rms_db:.2f} dB" if delta_rms_db > float('-inf') else "-∞ dB")
+                st.metric("Peak Amplitude", f"{delta_peak:.6f}")
+            
+            # Explanatory text
+            st.info("""
+            **Delta Signal:** The difference between processed and original audio. 
+            This reveals only what the processor is adding or changing, making it easier 
+            to hear the effect in isolation.
+            """)
+            
+            # Spectrogram placeholder
+            st.markdown("### Spectrograms")
+            st.info("Spectrogram visualization will be available here after render. Placeholder for future implementation.")
+            # TODO: Generate and display spectrograms for input, output, and delta
+            # Can use existing visualizers.py functions or create new spectrogram plotting function
+            
+            # Download Delta Audio button
+            st.markdown("### Export")
+            delta_bytes = _audio_to_wav_bytes(delta, sr)
+            st.download_button(
+                "Download Delta Audio (WAV)",
+                data=delta_bytes,
+                file_name="quantum_distortion_delta.wav",
+                mime="audio/wav",
+            )
 
 
 def main() -> None:
