@@ -459,32 +459,16 @@ def render_v2_ui() -> None:
                     # Build centralized config from session state
                     config = build_processing_config_from_session()
                     
-                    # Show warnings for features not yet implemented
+                    # Show warnings for features with limited DSP support
                     low_band = config.get("low_band", {})
                     if low_band.get("saturation_type") != "Tube":
                         st.warning(f"Saturation type '{low_band.get('saturation_type')}' not yet implemented in DSP. Using Tube mode.")
-                    if low_band.get("mono_strength", 1.0) < 1.0:
-                        st.warning(f"Mono strength {low_band.get('mono_strength')} not yet implemented in DSP. Using full mono (1.0).")
-                    if low_band.get("output_trim_db", 0) != 0:
-                        st.warning(f"Low band output trim ({low_band.get('output_trim_db')} dB) not yet implemented in DSP.")
-                    
+
                     high_band = config.get("high_band", {})
                     if high_band.get("fft_size", 2048) != 2048:
                         st.warning(f"FFT size {high_band.get('fft_size')} not yet implemented in DSP. Using default 2048.")
                     if high_band.get("window_type", "hann") != "hann":
                         st.warning(f"Window type '{high_band.get('window_type')}' not yet implemented in DSP. Using Hann window.")
-                    if high_band.get("precision_mode", "Quantized") != "Quantized":
-                        st.info(f"Precision mode '{high_band.get('precision_mode')}' not yet implemented. Using default quantization.")
-                    if high_band.get("output_trim_db", 0) != 0:
-                        st.warning(f"High band output trim ({high_band.get('output_trim_db')} dB) not yet implemented in DSP.")
-                    
-                    quantum_fx = config.get("quantum_fx", {})
-                    if quantum_fx.get("spectral_freeze", False):
-                        st.info("Spectral Freeze: Feature not yet implemented in DSP. Will hold current spectral texture when available.")
-                    if quantum_fx.get("formant_shift", 0) != 0:
-                        st.info(f"Formant Shift ({quantum_fx.get('formant_shift')}%): Feature not yet implemented in DSP. Will shift vocal character when available.")
-                    if quantum_fx.get("fundamental_hz") is not None:
-                        st.info(f"Harmonic Locking ({quantum_fx.get('fundamental_hz'):.2f} Hz): Feature not yet implemented in DSP. Will lock harmonics when available.")
                     
                     # Process with config
                     processed, taps = process_audio(
@@ -492,12 +476,6 @@ def render_v2_ui() -> None:
                         sr=sr,
                         config=config,
                     )
-                    
-                    # TODO: Apply low_output_trim_db gain if implemented
-                    # For now, this is a placeholder
-                    # if output_trim_db != 0:
-                    #     gain_lin = 10.0 ** (output_trim_db / 20.0)
-                    #     # Apply to low band only - would need access to low_processed from taps
                     
                     st.session_state["processed"] = processed
                     st.session_state["taps"] = taps
@@ -941,7 +919,7 @@ def render_v2_ui() -> None:
             spectral_freeze = st.checkbox(
                 "Spectral Freeze",
                 value=settings.get("spectral_freeze", False),
-                help="Hold current texture (not yet implemented)",
+                help="Hold first-frame spectral texture for entire clip",
                 key="v2_quantum_spectral_freeze",
             )
             settings["spectral_freeze"] = spectral_freeze

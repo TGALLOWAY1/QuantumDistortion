@@ -113,6 +113,88 @@ SPECTRAL_FX_PRESETS: dict[str, dict] = {
 }
 
 
+def formant_shift_frame(
+    mag: np.ndarray,
+    freqs: np.ndarray,
+    shift_semitones: float,
+    lifter_order: int = 30,
+) -> np.ndarray:
+    """
+    Shift the spectral envelope (formants) independently of pitch.
+
+    Uses cepstral liftering to separate the spectral envelope from the fine
+    spectral structure, shifts the envelope, then reapplies it.
+
+    Parameters
+    ----------
+    mag : np.ndarray
+        Magnitude spectrum for a single frame (1D, non-negative).
+    freqs : np.ndarray
+        Frequency array in Hz (same shape as mag).
+    shift_semitones : float
+        Amount to shift formants in semitones. Positive = up, negative = down.
+    lifter_order : int
+        Cepstral lifter order. Controls the smoothness of the extracted envelope.
+        Higher values capture finer detail.
+
+    Returns
+    -------
+    mag_shifted : np.ndarray
+        Magnitude spectrum with shifted formant envelope.
+    """
+    mag = np.asarray(mag, dtype=float)
+    if len(mag) < 4 or shift_semitones == 0.0:
+        return mag.copy()
+
+    eps = 1e-12
+    n_bins = len(mag)
+
+    # Step 1: Extract spectral envelope via cepstrum
+    log_mag = np.log(np.clip(mag, eps, None))
+
+    # Compute real cepstrum (DCT-like via IFFT of log spectrum)
+    cepstrum = np.fft.irfft(log_mag, n=2 * (n_bins - 1))
+
+    # Lifter: keep only low-quefrency components for envelope
+    lifter = np.zeros_like(cepstrum)
+    order = min(lifter_order, len(lifter) // 2)
+    lifter[:order] = 1.0
+    lifter[-order + 1:] = 1.0  # symmetric for real signals
+
+    envelope_cepstrum = cepstrum * lifter
+    fine_cepstrum = cepstrum * (1.0 - lifter)
+
+    # Reconstruct envelope and fine structure
+    log_envelope = np.fft.rfft(envelope_cepstrum)[:n_bins].real
+    log_fine = np.fft.rfft(fine_cepstrum)[:n_bins].real
+
+    # Step 2: Shift the envelope
+    # shift_semitones → frequency ratio
+    ratio = 2.0 ** (shift_semitones / 12.0)
+
+    # Resample the log envelope by the inverse ratio
+    original_indices = np.arange(n_bins, dtype=float)
+    shifted_indices = original_indices / ratio
+
+    # Interpolate the shifted envelope
+    log_envelope_shifted = np.interp(
+        shifted_indices, original_indices, log_envelope,
+        left=log_envelope[0], right=log_envelope[-1]
+    )
+
+    # Step 3: Recombine shifted envelope with original fine structure
+    log_mag_shifted = log_envelope_shifted + log_fine
+    mag_shifted = np.exp(log_mag_shifted)
+
+    # Preserve total energy
+    original_energy = np.sum(mag ** 2)
+    shifted_energy = np.sum(mag_shifted ** 2)
+    if shifted_energy > eps:
+        mag_shifted *= np.sqrt(original_energy / shifted_energy)
+
+    return mag_shifted
+
+
 def bitcrush(
     mag: np.ndarray,
     phase: np.ndarray,
@@ -276,23 +358,27 @@ def bin_scramble(
         window = max(3, window if window % 2 == 1 else window + 1)
 
     if mode == "random_pick":
-        mag_out = np.zeros_like(mag)
         half = window // 2
-        for i in range(mag.shape[0]):
-            start = max(0, i - half)
-            end = min(mag.shape[0], i + half + 1)
-            # Choose random index in [start, end)
-            if end > start:
-                idx = np.random.randint(start, end)
-                mag_out[i] = mag[idx]
-            else:
-                mag_out[i] = mag[i]
+        n = mag.shape[0]
+        # Vectorized: for each bin i, pick a random index in [max(0,i-half), min(n,i+half+1))
+        offsets = np.random.randint(-half, half + 1, size=n)
+        indices = np.arange(n) + offsets
+        indices = np.clip(indices, 0, n - 1)
+        mag_out = mag[indices]
     elif mode == "swap":
         mag_out = mag.copy()
-        for i in range(mag.size - 1):
-            if np.random.rand() < 0.25:
-                # Swap mag_out[i] and mag_out[i+1]
-                mag_out[i], mag_out[i + 1] = mag_out[i + 1], mag_out[i]
+        # Vectorized: generate swap decisions for all adjacent pairs at once
+        swap_mask = np.random.rand(mag.size - 1) < 0.25
+        swap_indices = np.where(swap_mask)[0]
+        # Avoid overlapping swaps by keeping only non-adjacent swap indices
+        if len(swap_indices) > 1:
+            keep = np.concatenate([[True], np.diff(swap_indices) > 1])
+            swap_indices = swap_indices[keep]
+        # Perform all swaps at once
+        if len(swap_indices) > 0:
+            mag_out[swap_indices], mag_out[swap_indices + 1] = (
+                mag_out[swap_indices + 1].copy(), mag_out[swap_indices].copy()
+            )
     else:
         # Unknown mode, return unchanged
         mag_out = mag.copy()
