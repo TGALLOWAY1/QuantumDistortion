@@ -128,13 +128,10 @@ def apply_spectral_fx(
 
 # OLA-Compliant STFT Configuration
 # The STFT/ISTFT functions in stft_utils.py enforce strict OLA architecture:
-# - hop_length is always n_fft // 4 (75% overlap) - enforced by OLA requirements
-# - Window is always Hann (sym=False) - enforced for OLA compatibility
-# - These parameters are passed for clarity but are ignored by stft_utils functions
+# - hop_length is always n_fft // 4 (75% overlap)
+# - Window is always Hann (sym=False)
 # - n_fft=2048 provides good frequency resolution without excessive computation
 N_FFT_DEFAULT = 2048
-HOP_LENGTH_DEFAULT = N_FFT_DEFAULT // 4  # 512 (enforced by OLA architecture)
-WINDOW_DEFAULT = "hann"  # Ignored - OLA architecture enforces Hann window
 CENTER_DEFAULT = True  # Controls center padding (librosa-compatible behavior)
 
 
@@ -404,8 +401,7 @@ def _process_single_band(
                 x_in,
                 sr=sr,
                 n_fft=N_FFT_DEFAULT,
-                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                 center=CENTER_DEFAULT,
             )
             stft_end = time.perf_counter()
@@ -425,8 +421,7 @@ def _process_single_band(
                 S,
                 sr=sr,
                 n_fft=N_FFT_DEFAULT,
-                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                 length=n_samples,
                 center=CENTER_DEFAULT,
             )
@@ -469,14 +464,12 @@ def _process_single_band(
     # =====================================================================
     stft_start = time.perf_counter()
     try:
-        # Note: hop_length and window parameters are ignored by stft_mono()
         # OLA architecture enforces: hop_length=n_fft//4, window=Hann
         S, freqs = stft_mono(
             x_in,
             sr=sr,
             n_fft=N_FFT_DEFAULT,
-            hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-            window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
             center=CENTER_DEFAULT,
         )
         stft_end = time.perf_counter()
@@ -522,14 +515,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_pre = istft_mono(
                     S,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )
@@ -551,8 +542,7 @@ def _process_single_band(
                 S,
                 sr=sr,
                 n_fft=N_FFT_DEFAULT,
-                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                 length=n_samples,
                 center=CENTER_DEFAULT,
             )
@@ -597,14 +587,13 @@ def _process_single_band(
             # Uses OLA-compliant STFT (hop=n_fft/4, Hann window)
             stft_start2 = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by stft_mono()
+    
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 S_post, freqs_post = stft_mono(
                     x_post_dist,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     center=CENTER_DEFAULT,
                 )
                 stft_end2 = time.perf_counter()
@@ -641,14 +630,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_post_quant = istft_mono(
                     S_post,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )
@@ -688,14 +675,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_post_quant = istft_mono(
                     S,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )
@@ -721,14 +706,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_post_quant = istft_mono(
                     S,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )

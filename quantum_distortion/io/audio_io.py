@@ -1,13 +1,13 @@
 from pathlib import Path
 
-from typing import Tuple, Union, Optional
+from typing import Tuple, Union
 
 import numpy as np  # type: ignore
 import soundfile as sf  # type: ignore
 
 
 
-def load_audio(path: Union[str, Path], target_sr: Optional[int] = None) -> Tuple[np.ndarray, int]:
+def load_audio(path: Union[str, Path]) -> Tuple[np.ndarray, int]:
 
     path = Path(path)
 
