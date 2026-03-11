@@ -10,12 +10,12 @@
   ],
   "reportMissingImports": "warning",
   "reportMissingTypeStubs": false,
-  "pythonVersion": "3.7",
+  "pythonVersion": "3.10",
   "typeCheckingMode": "basic",
   "executionEnvironments": [
     {
       "root": ".",
-      "pythonVersion": "3.7"
+      "pythonVersion": "3.10"
     }
   ]
 }
