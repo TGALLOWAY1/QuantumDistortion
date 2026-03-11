@@ -30,13 +30,7 @@ Less negative values indicate more coloration/processing.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-
-# Add repo root to path so imports work
-script_dir = Path(__file__).parent
-repo_root = script_dir.parent
-sys.path.insert(0, str(repo_root))
 
 from quantum_distortion.dsp.harness import process_file_to_file
 from tests.utils.audio_test_utils import load_audio, null_test
