@@ -1,3 +1,29 @@
+from typing import Literal
+
+import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Shared type aliases
+# ---------------------------------------------------------------------------
+ScaleName = Literal["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
+TapSource = Literal["input", "pre_quant", "post_dist", "output"]
+
+
+# ---------------------------------------------------------------------------
+# Shared audio utility
+# ---------------------------------------------------------------------------
+def ensure_mono_float32(audio: np.ndarray) -> np.ndarray:
+    """Convert audio to mono float32. Averages channels if stereo."""
+    x = np.asarray(audio, dtype=np.float32)
+    if x.ndim == 2:
+        x = x.mean(axis=1).astype(np.float32)
+    return x
+
+
+# ---------------------------------------------------------------------------
+# Default parameter values
+# ---------------------------------------------------------------------------
 DEFAULT_SAMPLE_RATE = 48000
 
 DEFAULT_KEY = "D"

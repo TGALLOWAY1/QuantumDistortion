@@ -23,6 +23,7 @@ from quantum_distortion.config import (
     DEFAULT_SNAP_STRENGTH,
     DEFAULT_DISTORTION_MODE,
     DEFAULT_SAMPLE_RATE,
+    ensure_mono_float32,
 )
 from quantum_distortion.io.audio_io import load_audio, save_audio
 from quantum_distortion.dsp.pipeline import process_audio
@@ -62,11 +63,7 @@ def process_file_to_file(
     # Load audio
     audio, sr = load_audio(infile)
     
-    # Convert to mono float32 if needed (process_audio handles this, but we do it here
-    # to match the pattern from render_preset.py)
-    x = np.asarray(audio, dtype=np.float32)
-    if x.ndim == 2:
-        x = x.mean(axis=1).astype(np.float32)
+    x = ensure_mono_float32(audio)
     
     # Build kwargs for process_audio
     if preset is not None:

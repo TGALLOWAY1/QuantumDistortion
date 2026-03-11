@@ -23,6 +23,7 @@ from quantum_distortion.config import (
     DEFAULT_SAMPLE_RATE,
     PREVIEW_ENABLED_DEFAULT,
     PREVIEW_MAX_SECONDS,
+    ensure_mono_float32,
 )
 from quantum_distortion.dsp.quantizer import quantize_spectrum, build_target_bins_for_freqs, build_harmonic_target_bins
 from quantum_distortion.dsp.distortion import apply_distortion
@@ -146,17 +147,6 @@ class RenderTiming:
     total: float = 0.0
 
 
-def _ensure_mono(audio: np.ndarray) -> np.ndarray:
-    """
-    Ensure mono float32 audio. If stereo/multi-channel, downmix to mono by averaging.
-    """
-    x = np.asarray(audio, dtype=float)
-    if x.ndim == 1:
-        return x.astype(np.float32)
-    if x.ndim == 2:
-        # shape: (n_samples, n_channels)
-        return np.mean(x, axis=1).astype(np.float32)
-    raise ValueError("Unsupported audio shape; expected 1D or 2D array")
 
 
 def _apply_spectral_quantization_to_stft(
@@ -925,7 +915,7 @@ def process_audio(
                     audio = audio[:max_samples, :]
                     print(f"[PREVIEW] Truncated audio to first {PREVIEW_MAX_SECONDS:.1f}s ({max_samples} samples)")
 
-        x_in = _ensure_mono(audio)
+        x_in = ensure_mono_float32(audio)
         n_samples = x_in.shape[0]
 
         # --- Tap: input ---

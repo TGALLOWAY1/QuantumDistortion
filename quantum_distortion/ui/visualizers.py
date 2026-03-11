@@ -3,20 +3,13 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-try:
-    from typing import Literal
-except ImportError:
-    from typing_extensions import Literal
-
 
 import numpy as np
 import matplotlib.pyplot as plt
 
 
+from quantum_distortion.config import TapSource
 from quantum_distortion.dsp.quantizer import build_scale_notes
-
-
-TapSource = Literal["input", "pre_quant", "post_dist", "output"]
 
 
 def _select_segment(

@@ -3,23 +3,16 @@ from __future__ import annotations
 
 from typing import Tuple, Union
 
-try:
-    from typing import Literal
-except ImportError:
-    from typing_extensions import Literal
-
 
 import numpy as np
 import librosa
 
 
+from quantum_distortion.config import ScaleName
 from quantum_distortion.dsp.quantizer import (
     freq_to_midi,
     build_scale_notes,
 )
-
-
-ScaleName = Literal["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
 
 
 def _nearest_scale_midi(
