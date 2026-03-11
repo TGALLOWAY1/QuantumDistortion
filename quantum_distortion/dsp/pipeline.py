@@ -30,7 +30,7 @@ from quantum_distortion.dsp.distortion import apply_distortion
 from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
 from quantum_distortion.dsp.crossover import linkwitz_riley_split, estimate_filter_group_delay_samples
-from quantum_distortion.dsp.saturation import soft_tube, make_mono_lowband
+from quantum_distortion.dsp.saturation import saturate_lowband, make_mono_lowband
 from quantum_distortion.dsp import spectral_fx
 
 
@@ -944,7 +944,7 @@ def process_audio(
             # Low band path: time-domain only (mono-maker + saturation)
             # This keeps bass frequencies in the time domain for better transient response
             # NO STFT processing - bypasses OLA STFT pipeline entirely (from M9)
-            low_saturated = soft_tube(low_aligned, drive=lowband_drive)
+            low_saturated = saturate_lowband(low_aligned, drive=lowband_drive)
             # Apply mono_strength: 1.0 = full mono, 0.0 = bypass mono-maker
             if mono_strength >= 1.0:
                 low_processed = make_mono_lowband(low_saturated)
