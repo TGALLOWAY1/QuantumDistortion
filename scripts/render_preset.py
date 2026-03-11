@@ -8,6 +8,7 @@ import argparse
 import numpy as np
 
 
+from quantum_distortion.config import ensure_mono_float32
 from quantum_distortion.io.audio_io import load_audio, save_audio
 from quantum_distortion.dsp.pipeline import process_audio
 from quantum_distortion.presets import list_presets, get_preset
@@ -41,9 +42,7 @@ def main() -> None:
 
     audio, sr = load_audio(infile)
 
-    x = np.asarray(audio, dtype=np.float32)
-    if x.ndim == 2:
-        x = x.mean(axis=1).astype(np.float32)
+    x = ensure_mono_float32(audio)
 
     preset = get_preset(args.preset)
 

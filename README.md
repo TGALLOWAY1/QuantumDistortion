@@ -111,3 +111,9 @@ These are good "portfolio-ready" demonstrations to showcase:
 - Smear + bin smoothing
 - Wavefold / tube distortion
 - Limiter safety net keeping things in check
+
+## Documentation
+
+- [Architecture](docs/architecture.md) — Signal flow, module map, design decisions
+- [API Reference](docs/api.md) — `process_audio()`, `PipelineConfig`, I/O, CLI scripts
+- [Development Guide](docs/development.md) — Setup, testing, contributing

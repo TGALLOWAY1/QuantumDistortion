@@ -1,4 +1,28 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
 .pytest_cache/
+.mypy_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Office temp files
+~$*
+
+# Binary documents
+*.docx
+
+# Generated output
+examples/visualizations/
+tests/data/processed/
+test_data/
+
+# IDE
+.vscode/
+.idea/

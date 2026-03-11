@@ -3,12 +3,13 @@ from __future__ import annotations
 import numpy as np
 
 
-def soft_tube(x: np.ndarray, drive: float = 1.0) -> np.ndarray:
+def saturate_lowband(x: np.ndarray, drive: float = 1.0) -> np.ndarray:
     """
-    Simple tube-like saturation. Assumes audio in [-1, 1].
-    
+    Low-band tube-like saturation. Assumes audio in [-1, 1].
+
     Uses a tanh waveshaper with configurable drive. Higher drive values
-    increase saturation and harmonic content.
+    increase saturation and harmonic content. Distinct from the soft_tube
+    in distortion.py which has a variable warmth parameter.
     
     Parameters
     ----------

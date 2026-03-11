@@ -8,6 +8,7 @@ import argparse
 import numpy as np
 
 
+from quantum_distortion.config import ensure_mono_float32
 from quantum_distortion.io.audio_io import load_audio
 from quantum_distortion.dsp.pipeline import process_audio
 from quantum_distortion.dsp.analyses import avg_cents_offset_from_scale
@@ -26,9 +27,7 @@ def main() -> None:
 
     audio, sr = load_audio(infile)
 
-    x = np.asarray(audio, dtype=np.float32)
-    if x.ndim == 2:
-        x = x.mean(axis=1).astype(np.float32)
+    x = ensure_mono_float32(audio)
 
     print(f"Loaded {infile} — {x.shape[0] / float(sr):.2f}s @ {sr} Hz, shape={x.shape}")
     print(f"Key: {args.key}, Scale: {args.scale}")

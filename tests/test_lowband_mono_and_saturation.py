@@ -1,6 +1,6 @@
 import numpy as np
 
-from quantum_distortion.dsp.saturation import make_mono_lowband, soft_tube
+from quantum_distortion.dsp.saturation import make_mono_lowband, saturate_lowband
 
 
 def test_make_mono_lowband_mono_input() -> None:
@@ -45,8 +45,8 @@ def test_make_mono_lowband_stereo_input() -> None:
     )
 
 
-def test_soft_tube_no_nans() -> None:
-    """Test that soft_tube doesn't return NaNs."""
+def test_saturate_lowband_no_nans() -> None:
+    """Test that saturate_lowband doesn't return NaNs."""
     sr = 44100
     duration = 0.1
     t = np.linspace(0.0, duration, int(sr * duration), endpoint=False)
@@ -54,13 +54,13 @@ def test_soft_tube_no_nans() -> None:
     
     # Test with various drive values
     for drive in [0.5, 1.0, 2.0, 5.0]:
-        result = soft_tube(x, drive=drive)
-        assert not np.any(np.isnan(result)), f"soft_tube should not return NaN for drive={drive}"
-        assert not np.any(np.isinf(result)), f"soft_tube should not return Inf for drive={drive}"
+        result = saturate_lowband(x, drive=drive)
+        assert not np.any(np.isnan(result)), f"saturate_lowband should not return NaN for drive={drive}"
+        assert not np.any(np.isinf(result)), f"saturate_lowband should not return Inf for drive={drive}"
 
 
-def test_soft_tube_adds_harmonics() -> None:
-    """Test that soft_tube adds harmonics (increases RMS at same peak level)."""
+def test_saturate_lowband_adds_harmonics() -> None:
+    """Test that saturate_lowband adds harmonics (increases RMS at same peak level)."""
     sr = 44100
     duration = 0.1
     t = np.linspace(0.0, duration, int(sr * duration), endpoint=False)
@@ -73,7 +73,7 @@ def test_soft_tube_adds_harmonics() -> None:
     x = x / np.max(np.abs(x)) * peak_level
     
     # Process with saturation
-    y = soft_tube(x, drive=2.0)
+    y = saturate_lowband(x, drive=2.0)
     
     # Check that peak is similar (saturation shouldn't clip too much at this level)
     peak_in = np.max(np.abs(x))
@@ -94,8 +94,8 @@ def test_soft_tube_adds_harmonics() -> None:
     )
 
 
-def test_soft_tube_stereo_support() -> None:
-    """Test that soft_tube works with stereo input."""
+def test_saturate_lowband_stereo_support() -> None:
+    """Test that saturate_lowband works with stereo input."""
     sr = 44100
     duration = 0.1
     t = np.linspace(0.0, duration, int(sr * duration), endpoint=False)
@@ -104,7 +104,7 @@ def test_soft_tube_stereo_support() -> None:
     right = 0.3 * np.sin(2.0 * np.pi * 880.0 * t).astype(np.float32)
     x_stereo = np.column_stack([left, right])
     
-    result = soft_tube(x_stereo, drive=1.5)
+    result = saturate_lowband(x_stereo, drive=1.5)
     
     # Should preserve shape
     assert result.shape == x_stereo.shape
@@ -114,7 +114,7 @@ def test_soft_tube_stereo_support() -> None:
     assert not np.any(np.isinf(result))
 
 
-def test_soft_tube_drive_parameter() -> None:
+def test_saturate_lowband_drive_parameter() -> None:
     """Test that higher drive values increase saturation."""
     sr = 44100
     duration = 0.1
@@ -122,8 +122,8 @@ def test_soft_tube_drive_parameter() -> None:
     x = 0.5 * np.sin(2.0 * np.pi * 440.0 * t).astype(np.float32)
     
     # Process with different drive values
-    y_low = soft_tube(x, drive=1.0)
-    y_high = soft_tube(x, drive=3.0)
+    y_low = saturate_lowband(x, drive=1.0)
+    y_high = saturate_lowband(x, drive=3.0)
     
     # Higher drive should produce more distortion
     # One way to measure this is to check the difference from the input

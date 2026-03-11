@@ -5,11 +5,6 @@ from dataclasses import dataclass
 
 from typing import Dict, Tuple
 
-try:
-    from typing import Literal
-except ImportError:
-    from typing_extensions import Literal
-
 
 import numpy as np
 from scipy.ndimage import convolve1d
@@ -28,7 +23,7 @@ except ImportError:
             return decorator
 
 
-ScaleName = Literal["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
+from quantum_distortion.config import ScaleName
 
 
 NOTE_NAMES_SHARP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]

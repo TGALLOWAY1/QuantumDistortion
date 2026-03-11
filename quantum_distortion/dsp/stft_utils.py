@@ -12,19 +12,17 @@ def stft_mono(
     audio: np.ndarray,
     sr: int,
     n_fft: int = 2048,
-    hop_length: Union[int, None] = None,
-    window: str = "hann",
     center: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute complex STFT for a mono signal with strict OLA compliance.
-    
+
     OLA Architecture:
-    - hop_length is forced to n_fft // 4 (75% overlap)
+    - hop_length is fixed to n_fft // 4 (75% overlap)
     - Analysis window: Hann window (sym=False) for OLA compatibility
     - Each frame is windowed before FFT: frame = window * audio_segment
     - This ensures proper overlap-add reconstruction in istft_mono()
-    
+
     Parameters
     ----------
     audio : np.ndarray
@@ -33,10 +31,6 @@ def stft_mono(
         Sample rate in Hz
     n_fft : int, optional
         FFT size. Default 2048.
-    hop_length : int, optional
-        Ignored - always set to n_fft // 4 for OLA compliance.
-    window : str, optional
-        Ignored - always uses Hann window for OLA compliance.
     center : bool, optional
         If True, pad audio symmetrically before processing (librosa-compatible).
         Default True.
@@ -107,21 +101,19 @@ def istft_mono(
     S: np.ndarray,
     sr: int,
     n_fft: int = 2048,
-    hop_length: Union[int, None] = None,
-    window: str = "hann",
     length: Union[int, None] = None,
     center: bool = True,
 ) -> np.ndarray:
     """
     Inverse STFT for a mono signal with strict OLA compliance.
-    
+
     OLA Architecture:
-    - hop_length is forced to n_fft // 4 (75% overlap)
+    - hop_length is fixed to n_fft // 4 (75% overlap)
     - Synthesis window: Same Hann window as analysis (OLA-compatible)
     - Each IFFT frame is windowed: frame = synthesis_window * ifft_result
     - Overlap-add: Sum overlapping windowed frames to reconstruct signal
     - With hop_length = n_fft // 4 and Hann window, OLA condition is satisfied
-    
+
     Parameters
     ----------
     S : np.ndarray
@@ -130,10 +122,6 @@ def istft_mono(
         Sample rate in Hz (used for frequency calculation, not reconstruction)
     n_fft : int, optional
         FFT size. Must match the n_fft used in stft_mono(). Default 2048.
-    hop_length : int, optional
-        Ignored - always set to n_fft // 4 for OLA compliance.
-    window : str, optional
-        Ignored - always uses Hann window for OLA compliance.
     length : int, optional
         Desired output length in samples. If None, length is inferred from STFT.
     center : bool, optional

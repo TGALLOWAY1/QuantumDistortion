@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "quantum-distortion"
+version = "0.1.0"
+description = "Spectral pitch quantization + distortion DSP engine"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "soundfile",
+    "matplotlib",
+    "numba",
+]
+
+[project.optional-dependencies]
+ui = ["streamlit"]
+analysis = ["librosa"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["quantum_distortion*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

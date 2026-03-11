@@ -23,13 +23,15 @@ from quantum_distortion.config import (
     DEFAULT_SAMPLE_RATE,
     PREVIEW_ENABLED_DEFAULT,
     PREVIEW_MAX_SECONDS,
+    PipelineConfig,
+    ensure_mono_float32,
 )
 from quantum_distortion.dsp.quantizer import quantize_spectrum, build_target_bins_for_freqs, build_harmonic_target_bins
 from quantum_distortion.dsp.distortion import apply_distortion
 from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
 from quantum_distortion.dsp.crossover import linkwitz_riley_split, estimate_filter_group_delay_samples
-from quantum_distortion.dsp.saturation import soft_tube, make_mono_lowband
+from quantum_distortion.dsp.saturation import saturate_lowband, make_mono_lowband
 from quantum_distortion.dsp import spectral_fx
 
 
@@ -128,13 +130,10 @@ def apply_spectral_fx(
 
 # OLA-Compliant STFT Configuration
 # The STFT/ISTFT functions in stft_utils.py enforce strict OLA architecture:
-# - hop_length is always n_fft // 4 (75% overlap) - enforced by OLA requirements
-# - Window is always Hann (sym=False) - enforced for OLA compatibility
-# - These parameters are passed for clarity but are ignored by stft_utils functions
+# - hop_length is always n_fft // 4 (75% overlap)
+# - Window is always Hann (sym=False)
 # - n_fft=2048 provides good frequency resolution without excessive computation
 N_FFT_DEFAULT = 2048
-HOP_LENGTH_DEFAULT = N_FFT_DEFAULT // 4  # 512 (enforced by OLA architecture)
-WINDOW_DEFAULT = "hann"  # Ignored - OLA architecture enforces Hann window
 CENTER_DEFAULT = True  # Controls center padding (librosa-compatible behavior)
 
 
@@ -149,17 +148,6 @@ class RenderTiming:
     total: float = 0.0
 
 
-def _ensure_mono(audio: np.ndarray) -> np.ndarray:
-    """
-    Ensure mono float32 audio. If stereo/multi-channel, downmix to mono by averaging.
-    """
-    x = np.asarray(audio, dtype=float)
-    if x.ndim == 1:
-        return x.astype(np.float32)
-    if x.ndim == 2:
-        # shape: (n_samples, n_channels)
-        return np.mean(x, axis=1).astype(np.float32)
-    raise ValueError("Unsupported audio shape; expected 1D or 2D array")
 
 
 def _apply_spectral_quantization_to_stft(
@@ -404,8 +392,7 @@ def _process_single_band(
                 x_in,
                 sr=sr,
                 n_fft=N_FFT_DEFAULT,
-                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                 center=CENTER_DEFAULT,
             )
             stft_end = time.perf_counter()
@@ -425,8 +412,7 @@ def _process_single_band(
                 S,
                 sr=sr,
                 n_fft=N_FFT_DEFAULT,
-                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                 length=n_samples,
                 center=CENTER_DEFAULT,
             )
@@ -469,14 +455,12 @@ def _process_single_band(
     # =====================================================================
     stft_start = time.perf_counter()
     try:
-        # Note: hop_length and window parameters are ignored by stft_mono()
         # OLA architecture enforces: hop_length=n_fft//4, window=Hann
         S, freqs = stft_mono(
             x_in,
             sr=sr,
             n_fft=N_FFT_DEFAULT,
-            hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-            window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
             center=CENTER_DEFAULT,
         )
         stft_end = time.perf_counter()
@@ -522,14 +506,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_pre = istft_mono(
                     S,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )
@@ -551,8 +533,7 @@ def _process_single_band(
                 S,
                 sr=sr,
                 n_fft=N_FFT_DEFAULT,
-                hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                 length=n_samples,
                 center=CENTER_DEFAULT,
             )
@@ -597,14 +578,13 @@ def _process_single_band(
             # Uses OLA-compliant STFT (hop=n_fft/4, Hann window)
             stft_start2 = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by stft_mono()
+    
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 S_post, freqs_post = stft_mono(
                     x_post_dist,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     center=CENTER_DEFAULT,
                 )
                 stft_end2 = time.perf_counter()
@@ -641,14 +621,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_post_quant = istft_mono(
                     S_post,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )
@@ -688,14 +666,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_post_quant = istft_mono(
                     S,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )
@@ -721,14 +697,12 @@ def _process_single_band(
             # =================================================================
             istft_start = time.perf_counter()
             try:
-                # Note: hop_length and window parameters are ignored by istft_mono()
                 # OLA architecture enforces: hop_length=n_fft//4, window=Hann
                 x_post_quant = istft_mono(
                     S,
                     sr=sr,
                     n_fft=N_FFT_DEFAULT,
-                    hop_length=HOP_LENGTH_DEFAULT,  # Ignored - enforced as n_fft//4
-                    window=WINDOW_DEFAULT,  # Ignored - enforced as Hann
+
                     length=n_samples,
                     center=CENTER_DEFAULT,
                 )
@@ -784,6 +758,157 @@ def _process_single_band(
     return x_out, taps
 
 
+def _parse_ui_config(
+    config: Dict[str, Any],
+    key: str,
+    scale: str,
+    crossover_hz: float,
+    lowband_drive: float,
+    mono_strength: float,
+    spectral_fx_mode: Union[str, None],
+    spectral_fx_strength: float,
+    spectral_freeze: bool,
+    formant_shift: float,
+    harmonic_lock_hz: float,
+    delta_listen: bool,
+    output_trim_db: float,
+) -> Dict[str, Any]:
+    """Parse V2 UI centralized config dict and return overridden parameter values."""
+    result: Dict[str, Any] = {
+        "key": key, "scale": scale, "crossover_hz": crossover_hz,
+        "lowband_drive": lowband_drive, "mono_strength": mono_strength,
+        "spectral_fx_mode": spectral_fx_mode, "spectral_fx_strength": spectral_fx_strength,
+        "spectral_freeze": spectral_freeze, "formant_shift": formant_shift,
+        "harmonic_lock_hz": harmonic_lock_hz, "delta_listen": delta_listen,
+        "output_trim_db": output_trim_db, "low_trim": 0.0, "use_multiband": True,
+    }
+
+    if "quantization" in config:
+        quant_cfg = config["quantization"]
+        result["key"] = str(quant_cfg.get("key", key))
+        result["scale"] = str(quant_cfg.get("scale", scale))
+    if "crossover_freq" in config:
+        result["crossover_hz"] = float(config["crossover_freq"])
+    if "low_band" in config:
+        low_band_cfg = config["low_band"]
+        saturation_amount = low_band_cfg.get("saturation_amount", 0.3)
+        result["lowband_drive"] = 1.0 + (saturation_amount * 4.0)
+        result["mono_strength"] = float(low_band_cfg.get("mono_strength", mono_strength))
+        result["low_trim"] = float(low_band_cfg.get("output_trim_db", 0.0))
+    if "high_band" in config:
+        high_band_cfg = config["high_band"]
+        bin_scrambling = high_band_cfg.get("bin_scrambling", 0.2)
+        phase_dispersal_amt = high_band_cfg.get("phase_dispersal", 0.3)
+        mag_decimation = high_band_cfg.get("mag_decimation", 0.5)
+        if bin_scrambling > 0.0:
+            result["spectral_fx_mode"] = "bin_scramble"
+            result["spectral_fx_strength"] = bin_scrambling
+        elif phase_dispersal_amt > 0.0:
+            result["spectral_fx_mode"] = "phase_dispersal"
+            result["spectral_fx_strength"] = phase_dispersal_amt
+        elif mag_decimation > 0.0:
+            result["spectral_fx_mode"] = "bitcrush"
+            result["spectral_fx_strength"] = mag_decimation
+        result["output_trim_db"] = float(high_band_cfg.get("output_trim_db", output_trim_db))
+    if "quantum_fx" in config:
+        quantum_fx_cfg = config["quantum_fx"]
+        result["spectral_freeze"] = bool(quantum_fx_cfg.get("spectral_freeze", spectral_freeze))
+        result["formant_shift"] = float(quantum_fx_cfg.get("formant_shift", formant_shift))
+        result["harmonic_lock_hz"] = float(quantum_fx_cfg.get("fundamental_hz", harmonic_lock_hz))
+    if "delta_listen" in config:
+        result["delta_listen"] = bool(config["delta_listen"])
+
+    return result
+
+
+def _process_multiband(
+    x_in: np.ndarray,
+    sr: int,
+    key: str,
+    scale: str,
+    snap_strength: float,
+    smear: float,
+    bin_smoothing: bool,
+    pre_quant: bool,
+    post_quant: bool,
+    distortion_mode: str,
+    distortion_params: Dict[str, Any],
+    limiter_on: bool,
+    limiter_ceiling_db: float,
+    dry_wet: float,
+    crossover_hz: float,
+    lowband_drive: float,
+    mono_strength: float,
+    low_trim: float,
+    passthrough_test: bool,
+    timing: RenderTiming,
+    spectral_fx_mode: Union[str, None],
+    spectral_fx_strength: float,
+    spectral_fx_params: Dict[str, Any],
+    spectral_freeze: bool,
+    formant_shift: float,
+    harmonic_lock_hz: float,
+    output_trim_db: float,
+    tap_input: np.ndarray,
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """Multiband processing: split into low/high, process separately, recombine."""
+    n_samples = x_in.shape[0]
+
+    low_band, high_band = linkwitz_riley_split(x_in, sr, crossover_hz)
+    filter_delay_samples = estimate_filter_group_delay_samples(sr, crossover_hz)
+    stft_latency_samples = N_FFT_DEFAULT // 2
+
+    low_aligned, high_aligned = _align_branches(
+        low_band, high_band, filter_delay_samples, stft_latency_samples,
+    )
+
+    # Low band: time-domain saturation + mono-maker
+    low_saturated = saturate_lowband(low_aligned, drive=lowband_drive)
+    if mono_strength >= 1.0:
+        low_processed = make_mono_lowband(low_saturated)
+    elif mono_strength > 0.0:
+        low_mono = make_mono_lowband(low_saturated)
+        low_processed = (mono_strength * low_mono) + ((1.0 - mono_strength) * low_saturated)
+    else:
+        low_processed = low_saturated
+    if low_trim != 0.0:
+        low_processed = low_processed * (10.0 ** (low_trim / 20.0))
+    low_processed = low_processed.astype(np.float32)
+
+    # High band: full STFT pipeline
+    processed_high, taps_high = _process_single_band(
+        high_aligned, sr=sr, key=key, scale=scale,
+        snap_strength=snap_strength, smear=smear, bin_smoothing=bin_smoothing,
+        pre_quant=pre_quant, post_quant=post_quant,
+        distortion_mode=distortion_mode, distortion_params=distortion_params,
+        limiter_on=limiter_on, limiter_ceiling_db=limiter_ceiling_db,
+        dry_wet=dry_wet, tap_input=high_aligned,
+        passthrough_test=passthrough_test, timing=timing,
+        is_high_band=True,
+        spectral_fx_mode=spectral_fx_mode, spectral_fx_strength=spectral_fx_strength,
+        spectral_fx_params=spectral_fx_params,
+        spectral_freeze=spectral_freeze, formant_shift=formant_shift,
+        harmonic_lock_hz=harmonic_lock_hz, output_trim_db=output_trim_db,
+    )
+
+    # Recombine
+    x_out = (low_processed + processed_high).astype(np.float32)
+    if x_out.shape[0] != n_samples:
+        if x_out.shape[0] > n_samples:
+            x_out = x_out[:n_samples]
+        else:
+            pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
+            x_out = np.concatenate([x_out, pad], axis=0)
+
+    taps = {
+        "input": tap_input,
+        "pre_quant": taps_high["pre_quant"],
+        "post_dist": low_processed + taps_high["post_dist"],
+        "output": x_out.copy(),
+    }
+    return x_out, taps
+
+
 def process_audio(
     audio: np.ndarray,
     sr: int = DEFAULT_SAMPLE_RATE,
@@ -814,9 +939,15 @@ def process_audio(
     delta_listen: bool = False,
     mono_strength: float = 1.0,
     output_trim_db: float = 0.0,
+    *,
+    pipeline_config: Union[PipelineConfig, None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
+
+    Can be called either with individual keyword arguments (backward-compatible)
+    or with a PipelineConfig object via pipeline_config=. When pipeline_config
+    is provided, its values override the individual keyword arguments.
 
     Pipeline:
         input
@@ -828,9 +959,12 @@ def process_audio(
           → (optional) limiter
           → dry/wet mix with input
           → (optional) multiband recombination (if use_multiband=True)
-    
+
     Parameters
     ----------
+    pipeline_config : PipelineConfig, optional
+        If provided, overrides all individual keyword arguments with values
+        from the config object. Only audio and sr are still taken as positional.
     preview_enabled : bool, optional
         If True, process only the first PREVIEW_MAX_SECONDS of audio for faster iteration.
         If None, reads from DSP_PREVIEW_MODE environment variable (1/true = enabled, 0/false/absent = disabled).
@@ -852,6 +986,36 @@ def process_audio(
     
     Timing information is logged to stdout at the end of processing, including preview mode status.
     """
+    # Apply PipelineConfig if provided — overrides individual kwargs
+    if pipeline_config is not None:
+        pc = pipeline_config
+        key = pc.key
+        scale = pc.scale
+        snap_strength = pc.snap_strength
+        smear = pc.smear
+        bin_smoothing = pc.bin_smoothing
+        pre_quant = pc.pre_quant
+        post_quant = pc.post_quant
+        distortion_mode = pc.distortion_mode
+        distortion_params = pc.distortion_params
+        limiter_on = pc.limiter_on
+        limiter_ceiling_db = pc.limiter_ceiling_db
+        dry_wet = pc.dry_wet
+        preview_enabled = pc.preview_enabled
+        use_multiband = pc.use_multiband
+        crossover_hz = pc.crossover_hz
+        lowband_drive = pc.lowband_drive
+        passthrough_test = pc.passthrough_test
+        spectral_fx_mode = pc.spectral_fx_mode
+        spectral_fx_strength = pc.spectral_fx_strength
+        spectral_fx_params = pc.spectral_fx_params
+        spectral_freeze = pc.spectral_freeze
+        formant_shift = pc.formant_shift
+        harmonic_lock_hz = pc.harmonic_lock_hz
+        delta_listen = pc.delta_listen
+        mono_strength = pc.mono_strength
+        output_trim_db = pc.output_trim_db
+
     # Determine preview mode: check parameter, then environment variable, then default
     if preview_enabled is None:
         env_preview = os.getenv("DSP_PREVIEW_MODE", "").strip().lower()
@@ -871,211 +1035,81 @@ def process_audio(
             distortion_params = {}
         if spectral_fx_params is None:
             spectral_fx_params = {}
-        
+
         # Default low-band trim (overridden by config if provided)
         low_trim = 0.0
 
-        # Extract values from config dict if provided (V2 UI centralized config)
-        # Config values override individual parameters, preserving backward compatibility
+        # Parse V2 UI config dict if provided
         if config is not None:
-            # Quantization settings (key and scale)
-            if "quantization" in config:
-                quant_cfg = config["quantization"]
-                key = str(quant_cfg.get("key", key))
-                scale = str(quant_cfg.get("scale", scale))
-            # Multiband settings
-            if "crossover_freq" in config:
-                crossover_hz = float(config["crossover_freq"])
-            if "low_band" in config:
-                low_band_cfg = config["low_band"]
-                # Map saturation_amount to lowband_drive
-                # saturation_amount 0.0 -> drive 1.0, 1.0 -> drive 5.0
-                saturation_amount = low_band_cfg.get("saturation_amount", 0.3)
-                lowband_drive = 1.0 + (saturation_amount * 4.0)
-                mono_strength = float(low_band_cfg.get("mono_strength", mono_strength))
-                low_trim = float(low_band_cfg.get("output_trim_db", 0.0))
-            else:
-                low_trim = 0.0
-            if "high_band" in config:
-                high_band_cfg = config["high_band"]
-                # Determine spectral FX from high band settings
-                # Priority: bin_scramble > phase_dispersal > bitcrush
-                bin_scrambling = high_band_cfg.get("bin_scrambling", 0.2)
-                phase_dispersal_amt = high_band_cfg.get("phase_dispersal", 0.3)
-                mag_decimation = high_band_cfg.get("mag_decimation", 0.5)
+            parsed = _parse_ui_config(
+                config, key=key, scale=scale, crossover_hz=crossover_hz,
+                lowband_drive=lowband_drive, mono_strength=mono_strength,
+                spectral_fx_mode=spectral_fx_mode, spectral_fx_strength=spectral_fx_strength,
+                spectral_freeze=spectral_freeze, formant_shift=formant_shift,
+                harmonic_lock_hz=harmonic_lock_hz, delta_listen=delta_listen,
+                output_trim_db=output_trim_db,
+            )
+            key = parsed["key"]
+            scale = parsed["scale"]
+            crossover_hz = parsed["crossover_hz"]
+            lowband_drive = parsed["lowband_drive"]
+            mono_strength = parsed["mono_strength"]
+            spectral_fx_mode = parsed["spectral_fx_mode"]
+            spectral_fx_strength = parsed["spectral_fx_strength"]
+            spectral_freeze = parsed["spectral_freeze"]
+            formant_shift = parsed["formant_shift"]
+            harmonic_lock_hz = parsed["harmonic_lock_hz"]
+            delta_listen = parsed["delta_listen"]
+            output_trim_db = parsed["output_trim_db"]
+            low_trim = parsed["low_trim"]
+            use_multiband = parsed["use_multiband"]
 
-                if bin_scrambling > 0.0:
-                    spectral_fx_mode = "bin_scramble"
-                    spectral_fx_strength = bin_scrambling
-                elif phase_dispersal_amt > 0.0:
-                    spectral_fx_mode = "phase_dispersal"
-                    spectral_fx_strength = phase_dispersal_amt
-                elif mag_decimation > 0.0:
-                    spectral_fx_mode = "bitcrush"
-                    spectral_fx_strength = mag_decimation
-                output_trim_db = float(high_band_cfg.get("output_trim_db", output_trim_db))
-            if "quantum_fx" in config:
-                quantum_fx_cfg = config["quantum_fx"]
-                spectral_freeze = bool(quantum_fx_cfg.get("spectral_freeze", spectral_freeze))
-                formant_shift = float(quantum_fx_cfg.get("formant_shift", formant_shift))
-                harmonic_lock_hz = float(quantum_fx_cfg.get("fundamental_hz", harmonic_lock_hz))
-            if "delta_listen" in config:
-                delta_listen = bool(config["delta_listen"])
-            # Enable multiband if config is provided (V2 UI always uses multiband)
-            use_multiband = True
-
-        # Preview mode: truncate audio to first N seconds for faster iteration
-        # This happens before any processing, so the rest of the pipeline doesn't
-        # need to know whether it's a preview or full render.
+        # Preview mode: truncate audio
         if preview_enabled:
             max_samples = int(sr * PREVIEW_MAX_SECONDS)
-            # Truncate along the time dimension (last axis for 1D, first axis for 2D)
-            # Audio shape: 1D = (n_samples,), 2D = (n_samples, n_channels)
-            if audio.ndim == 1:
-                # Mono: shape is (n_samples,)
-                if len(audio) > max_samples:
-                    audio = audio[:max_samples]
-                    print(f"[PREVIEW] Truncated audio to first {PREVIEW_MAX_SECONDS:.1f}s ({max_samples} samples)")
-            elif audio.ndim == 2:
-                # Multi-channel: shape is (n_samples, n_channels)
-                if audio.shape[0] > max_samples:
-                    audio = audio[:max_samples, :]
-                    print(f"[PREVIEW] Truncated audio to first {PREVIEW_MAX_SECONDS:.1f}s ({max_samples} samples)")
+            if audio.ndim == 1 and len(audio) > max_samples:
+                audio = audio[:max_samples]
+                print(f"[PREVIEW] Truncated audio to first {PREVIEW_MAX_SECONDS:.1f}s ({max_samples} samples)")
+            elif audio.ndim == 2 and audio.shape[0] > max_samples:
+                audio = audio[:max_samples, :]
+                print(f"[PREVIEW] Truncated audio to first {PREVIEW_MAX_SECONDS:.1f}s ({max_samples} samples)")
 
-        x_in = _ensure_mono(audio)
-        n_samples = x_in.shape[0]
-
-        # --- Tap: input ---
+        x_in = ensure_mono_float32(audio)
         tap_input = x_in.copy()
 
-        # =====================================================================
-        # MULTIBAND PROCESSING: Split into low/high bands if enabled
-        # =====================================================================
         if use_multiband:
-            # Split into low and high bands using Linkwitz-Riley crossover
-            low_band, high_band = linkwitz_riley_split(x_in, sr, crossover_hz)
-            
-            # Estimate latency for alignment
-            filter_delay_samples = estimate_filter_group_delay_samples(sr, crossover_hz)
-            # STFT latency: when center=True, the window is centered, adding n_fft/2 samples of delay
-            stft_latency_samples = N_FFT_DEFAULT // 2
-            
-            # Align branches to compensate for latency differences
-            low_aligned, high_aligned = _align_branches(
-                low_band,
-                high_band,
-                filter_delay_samples,
-                stft_latency_samples,
-            )
-            
-            # Low band path: time-domain only (mono-maker + saturation)
-            # This keeps bass frequencies in the time domain for better transient response
-            # NO STFT processing - bypasses OLA STFT pipeline entirely (from M9)
-            low_saturated = soft_tube(low_aligned, drive=lowband_drive)
-            # Apply mono_strength: 1.0 = full mono, 0.0 = bypass mono-maker
-            if mono_strength >= 1.0:
-                low_processed = make_mono_lowband(low_saturated)
-            elif mono_strength > 0.0:
-                low_mono = make_mono_lowband(low_saturated)
-                low_processed = (mono_strength * low_mono) + ((1.0 - mono_strength) * low_saturated)
-            else:
-                low_processed = low_saturated
-            # Apply low-band output trim
-            if low_trim != 0.0:
-                low_processed = low_processed * (10.0 ** (low_trim / 20.0))
-            low_processed = low_processed.astype(np.float32)
-
-            # High band path: full OLA-compliant STFT pipeline (spectral quantization, etc.)
-            # Uses updated OLA STFT/ISTFT from stft_utils.py
-            # In passthrough_test mode, this performs transparent STFT->ISTFT roundtrip
-            processed_high, taps_high = _process_single_band(
-                high_aligned,
-                sr=sr,
-                key=key,
-                scale=scale,
-                snap_strength=snap_strength,
-                smear=smear,
-                bin_smoothing=bin_smoothing,
-                pre_quant=pre_quant,
-                post_quant=post_quant,
-                distortion_mode=distortion_mode,
-                distortion_params=distortion_params,
-                limiter_on=limiter_on,
-                limiter_ceiling_db=limiter_ceiling_db,
-                dry_wet=dry_wet,
-                tap_input=high_aligned,  # Use band-specific input for dry/wet mix
-                passthrough_test=passthrough_test,
-                timing=timing,
-                is_high_band=True,  # Spectral FX applies only to high band
-                spectral_fx_mode=spectral_fx_mode,
-                spectral_fx_strength=spectral_fx_strength,
+            x_out, taps = _process_multiband(
+                x_in, sr=sr, key=key, scale=scale,
+                snap_strength=snap_strength, smear=smear, bin_smoothing=bin_smoothing,
+                pre_quant=pre_quant, post_quant=post_quant,
+                distortion_mode=distortion_mode, distortion_params=distortion_params,
+                limiter_on=limiter_on, limiter_ceiling_db=limiter_ceiling_db,
+                dry_wet=dry_wet, crossover_hz=crossover_hz,
+                lowband_drive=lowband_drive, mono_strength=mono_strength,
+                low_trim=low_trim, passthrough_test=passthrough_test, timing=timing,
+                spectral_fx_mode=spectral_fx_mode, spectral_fx_strength=spectral_fx_strength,
                 spectral_fx_params=spectral_fx_params,
-                spectral_freeze=spectral_freeze,
-                formant_shift=formant_shift,
-                harmonic_lock_hz=harmonic_lock_hz,
-                output_trim_db=output_trim_db,
-            )
-
-            # Recombine bands: mixed output = low_band_processed + high_band_processed
-            # Both bands are correctly reconstructed (low: time-domain, high: OLA-compliant ISTFT)
-            x_out = low_processed + processed_high
-            x_out = x_out.astype(np.float32)
-            
-            # Ensure output length matches input
-            if x_out.shape[0] != n_samples:
-                if x_out.shape[0] > n_samples:
-                    x_out = x_out[:n_samples]
-                else:
-                    pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
-                    x_out = np.concatenate([x_out, pad], axis=0)
-            
-            # For taps, combine low and high band contributions
-            # Low band: use processed low band for post_dist (since it goes through saturation)
-            # High band: use taps from STFT pipeline
-            taps = {
-                "input": tap_input,
-                "pre_quant": taps_high["pre_quant"],  # Only high band has pre_quant
-                "post_dist": low_processed + taps_high["post_dist"],  # Combine low saturation + high distortion
-                "output": x_out.copy(),
-            }
-        else:
-            # Single-band processing (original behavior)
-            # In passthrough_test mode, this performs transparent STFT->ISTFT roundtrip
-            # Note: Spectral FX only applies in multiband mode (high-band only)
-            x_out, taps_band = _process_single_band(
-                x_in,
-                sr=sr,
-                key=key,
-                scale=scale,
-                snap_strength=snap_strength,
-                smear=smear,
-                bin_smoothing=bin_smoothing,
-                pre_quant=pre_quant,
-                post_quant=post_quant,
-                distortion_mode=distortion_mode,
-                distortion_params=distortion_params,
-                limiter_on=limiter_on,
-                limiter_ceiling_db=limiter_ceiling_db,
-                dry_wet=dry_wet,
+                spectral_freeze=spectral_freeze, formant_shift=formant_shift,
+                harmonic_lock_hz=harmonic_lock_hz, output_trim_db=output_trim_db,
                 tap_input=tap_input,
-                passthrough_test=passthrough_test,
-                timing=timing,
-                is_high_band=False,  # Single-band mode: no spectral FX
-                spectral_fx_mode=spectral_fx_mode,
-                spectral_fx_strength=spectral_fx_strength,
-                spectral_fx_params=spectral_fx_params,
-                spectral_freeze=spectral_freeze,
-                formant_shift=formant_shift,
-                harmonic_lock_hz=harmonic_lock_hz,
-                output_trim_db=output_trim_db,
             )
-            
-            # Add input tap to match expected structure
-            taps = {
-                "input": tap_input,
-                **taps_band,
-            }
-        
+        else:
+            x_out, taps_band = _process_single_band(
+                x_in, sr=sr, key=key, scale=scale,
+                snap_strength=snap_strength, smear=smear, bin_smoothing=bin_smoothing,
+                pre_quant=pre_quant, post_quant=post_quant,
+                distortion_mode=distortion_mode, distortion_params=distortion_params,
+                limiter_on=limiter_on, limiter_ceiling_db=limiter_ceiling_db,
+                dry_wet=dry_wet, tap_input=tap_input,
+                passthrough_test=passthrough_test, timing=timing,
+                is_high_band=False,
+                spectral_fx_mode=spectral_fx_mode, spectral_fx_strength=spectral_fx_strength,
+                spectral_fx_params=spectral_fx_params,
+                spectral_freeze=spectral_freeze, formant_shift=formant_shift,
+                harmonic_lock_hz=harmonic_lock_hz, output_trim_db=output_trim_db,
+            )
+            taps = {"input": tap_input, **taps_band}
+
         # Delta listen (M13): output = input - processed (hear what was removed)
         if delta_listen:
             min_len = min(len(tap_input), len(x_out))
