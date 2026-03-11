@@ -24,7 +24,7 @@ from quantum_distortion.config import (
     PREVIEW_ENABLED_DEFAULT,
     PREVIEW_MAX_SECONDS,
 )
-from quantum_distortion.dsp.quantizer import quantize_spectrum
+from quantum_distortion.dsp.quantizer import quantize_spectrum, build_target_bins_for_freqs, build_harmonic_target_bins
 from quantum_distortion.dsp.distortion import apply_distortion
 from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
@@ -175,13 +175,16 @@ def _apply_spectral_quantization_to_stft(
     spectral_fx_mode: Union[str, None] = None,
     spectral_fx_strength: float = 0.0,
     spectral_fx_params: Union[Dict[str, Any], None] = None,
+    spectral_freeze: bool = False,
+    formant_shift: float = 0.0,
+    harmonic_lock_hz: float = 0.0,
 ) -> np.ndarray:
     """
     Apply spectral quantization directly to an existing STFT matrix S.
-    
+
     This avoids recomputing STFT - all spectral operations are performed
     in-place on the provided S matrix.
-    
+
     Args:
         S: Complex STFT matrix (shape: [freq_bins, frames])
         freqs: Frequency array corresponding to S
@@ -191,34 +194,57 @@ def _apply_spectral_quantization_to_stft(
         spectral_fx_mode: Spectral FX mode ("bitcrush", "phase_dispersal", "bin_scramble", or None)
         spectral_fx_strength: Spectral FX strength (0.0-1.0)
         spectral_fx_params: Optional dict of spectral FX parameter overrides
-    
+        spectral_freeze: If True, freeze first-frame magnitudes for all frames (M12.1)
+        formant_shift: Formant shift in semitones (M12.2). 0 = no shift.
+        harmonic_lock_hz: Fundamental frequency for harmonic locking (M12.3). 0 = disabled.
+
     Returns:
         Modified complex STFT matrix S (same shape as input)
     """
     mags = np.abs(S)
     phases = np.angle(S)
 
-    # Vectorized quantization: process all frames at once
-    # The quantize_spectrum function is now vectorized internally, but we still
-    # need to process each frame separately because quantization operates per-frame.
-    # However, the internal operations within each frame are fully vectorized.
     proc_start = time.perf_counter()
     try:
-        # Process each frame (quantization is frame-independent)
-        # NOTE: While we loop over frames, all operations within quantize_spectrum
-        # are vectorized using NumPy array operations, eliminating nested loops.
+        # Cache target bins ONCE before frame loop (performance optimization).
+        # build_target_bins_for_freqs() depends only on freqs/key/scale which
+        # are constant across all frames. Previously called per-frame (~10s waste).
+        if harmonic_lock_hz > 0.0:
+            cached_target_bins = build_harmonic_target_bins(freqs, harmonic_lock_hz)
+        else:
+            cached_target_bins = build_target_bins_for_freqs(freqs, key, scale)
+
+        # Spectral freeze (M12.1): capture first-frame magnitudes
+        frozen_mags = None
+        if spectral_freeze and S.shape[1] > 0:
+            frozen_mags = mags[:, 0].copy()
+
+        # Build spectral FX config once (constant across frames)
+        sfx_cfg = None
+        if is_high_band and spectral_fx_mode is not None:
+            sfx_cfg = _SpectralFXConfig(
+                distortion_mode=spectral_fx_mode,
+                distortion_strength=spectral_fx_strength,
+                distortion_params=spectral_fx_params,
+            )
+
         for t in range(S.shape[1]):
             frame_mags = mags[:, t]
             frame_phases = phases[:, t]
 
-            # Apply spectral FX before quantization (only for high-band)
-            if is_high_band:
-                cfg = _SpectralFXConfig(
-                    distortion_mode=spectral_fx_mode,
-                    distortion_strength=spectral_fx_strength,
-                    distortion_params=spectral_fx_params,
+            # Spectral freeze: replace magnitudes with first-frame snapshot
+            if frozen_mags is not None:
+                frame_mags = frozen_mags.copy()
+
+            # Formant shifting (M12.2)
+            if formant_shift != 0.0:
+                frame_mags = spectral_fx.formant_shift_frame(
+                    frame_mags, freqs, formant_shift
                 )
-                frame_mags, frame_phases = apply_spectral_fx(frame_mags, frame_phases, cfg)
+
+            # Apply spectral FX before quantization (only for high-band)
+            if sfx_cfg is not None:
+                frame_mags, frame_phases = apply_spectral_fx(frame_mags, frame_phases, sfx_cfg)
 
             new_mags, new_phases = quantize_spectrum(
                 mags=frame_mags,
@@ -229,6 +255,7 @@ def _apply_spectral_quantization_to_stft(
                 snap_strength=snap_strength,
                 smear=smear,
                 bin_smoothing=bin_smoothing,
+                target_bins=cached_target_bins,
             )
 
             mags[:, t] = new_mags
@@ -343,6 +370,11 @@ def _process_single_band(
     spectral_fx_mode: Union[str, None] = None,
     spectral_fx_strength: float = 0.0,
     spectral_fx_params: Union[Dict[str, Any], None] = None,
+    spectral_freeze: bool = False,
+    formant_shift: float = 0.0,
+    harmonic_lock_hz: float = 0.0,
+    n_fft: int = 2048,
+    output_trim_db: float = 0.0,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Process a single audio band through the full pipeline.
@@ -474,6 +506,9 @@ def _process_single_band(
             spectral_fx_mode=spectral_fx_mode,
             spectral_fx_strength=spectral_fx_strength,
             spectral_fx_params=spectral_fx_params,
+            spectral_freeze=spectral_freeze,
+            formant_shift=formant_shift,
+            harmonic_lock_hz=harmonic_lock_hz,
         )
         # Convert to time-domain for tap and distortion
         # NOTE: If post-quant is also enabled, we defer the final iSTFT
@@ -594,6 +629,9 @@ def _process_single_band(
                 spectral_fx_mode=spectral_fx_mode,
                 spectral_fx_strength=spectral_fx_strength,
                 spectral_fx_params=spectral_fx_params,
+                spectral_freeze=spectral_freeze,
+                formant_shift=formant_shift,
+                harmonic_lock_hz=harmonic_lock_hz,
             )
             
             # =================================================================
@@ -639,8 +677,11 @@ def _process_single_band(
                 spectral_fx_mode=spectral_fx_mode,
                 spectral_fx_strength=spectral_fx_strength,
                 spectral_fx_params=spectral_fx_params,
+                spectral_freeze=spectral_freeze,
+                formant_shift=formant_shift,
+                harmonic_lock_hz=harmonic_lock_hz,
             )
-            
+
             # =================================================================
             # SINGLE iSTFT: Final reconstruction from frequency domain
             # Uses OLA-compliant ISTFT with proper overlap-add normalization
@@ -716,6 +757,12 @@ def _process_single_band(
     # --- Dry/Wet Mix ---
     dry_wet = float(np.clip(dry_wet, 0.0, 1.0))
     x_out = (dry_wet * x_limited) + ((1.0 - dry_wet) * tap_input)
+
+    # --- Output Trim ---
+    if output_trim_db != 0.0:
+        trim_gain = 10.0 ** (output_trim_db / 20.0)
+        x_out = x_out * trim_gain
+
     x_out = x_out.astype(np.float32)
 
     # Ensure output length matches input
@@ -761,6 +808,12 @@ def process_audio(
     spectral_fx_strength: float = 0.0,
     spectral_fx_params: Union[Dict[str, Any], None] = None,
     config: Union[Dict[str, Any], None] = None,
+    spectral_freeze: bool = False,
+    formant_shift: float = 0.0,
+    harmonic_lock_hz: float = 0.0,
+    delta_listen: bool = False,
+    mono_strength: float = 1.0,
+    output_trim_db: float = 0.0,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
@@ -819,6 +872,9 @@ def process_audio(
         if spectral_fx_params is None:
             spectral_fx_params = {}
         
+        # Default low-band trim (overridden by config if provided)
+        low_trim = 0.0
+
         # Extract values from config dict if provided (V2 UI centralized config)
         # Config values override individual parameters, preserving backward compatibility
         if config is not None:
@@ -836,35 +892,35 @@ def process_audio(
                 # saturation_amount 0.0 -> drive 1.0, 1.0 -> drive 5.0
                 saturation_amount = low_band_cfg.get("saturation_amount", 0.3)
                 lowband_drive = 1.0 + (saturation_amount * 4.0)
-                # TODO: Wire low_band["saturation_type"] to DSP (currently only "Tube" supported)
-                # TODO: Wire low_band["mono_strength"] to DSP (currently all-or-nothing)
-                # TODO: Wire low_band["output_trim_db"] to DSP (needs per-band gain stage)
+                mono_strength = float(low_band_cfg.get("mono_strength", mono_strength))
+                low_trim = float(low_band_cfg.get("output_trim_db", 0.0))
+            else:
+                low_trim = 0.0
             if "high_band" in config:
                 high_band_cfg = config["high_band"]
-                # TODO: Wire high_band["fft_size"] to DSP (currently hardcoded to 2048)
-                # TODO: Wire high_band["window_type"] to DSP (currently hardcoded to "hann")
-                # TODO: Wire high_band["precision_mode"] to DSP (needs mapping to quantization params)
                 # Determine spectral FX from high band settings
                 # Priority: bin_scramble > phase_dispersal > bitcrush
                 bin_scrambling = high_band_cfg.get("bin_scrambling", 0.2)
-                phase_dispersal = high_band_cfg.get("phase_dispersal", 0.3)
+                phase_dispersal_amt = high_band_cfg.get("phase_dispersal", 0.3)
                 mag_decimation = high_band_cfg.get("mag_decimation", 0.5)
-                
+
                 if bin_scrambling > 0.0:
                     spectral_fx_mode = "bin_scramble"
                     spectral_fx_strength = bin_scrambling
-                elif phase_dispersal > 0.0:
+                elif phase_dispersal_amt > 0.0:
                     spectral_fx_mode = "phase_dispersal"
-                    spectral_fx_strength = phase_dispersal
+                    spectral_fx_strength = phase_dispersal_amt
                 elif mag_decimation > 0.0:
                     spectral_fx_mode = "bitcrush"
                     spectral_fx_strength = mag_decimation
-                # TODO: Wire high_band["output_trim_db"] to DSP (needs per-band gain stage)
+                output_trim_db = float(high_band_cfg.get("output_trim_db", output_trim_db))
             if "quantum_fx" in config:
                 quantum_fx_cfg = config["quantum_fx"]
-                # TODO: Wire quantum_fx["spectral_freeze"] to DSP (needs frame-holding mechanism)
-                # TODO: Wire quantum_fx["formant_shift"] to DSP (needs formant shifting in spectral domain)
-                # TODO: Wire quantum_fx["fundamental_hz"] to DSP (needs harmonic locking in quantizer)
+                spectral_freeze = bool(quantum_fx_cfg.get("spectral_freeze", spectral_freeze))
+                formant_shift = float(quantum_fx_cfg.get("formant_shift", formant_shift))
+                harmonic_lock_hz = float(quantum_fx_cfg.get("fundamental_hz", harmonic_lock_hz))
+            if "delta_listen" in config:
+                delta_listen = bool(config["delta_listen"])
             # Enable multiband if config is provided (V2 UI always uses multiband)
             use_multiband = True
 
@@ -915,9 +971,20 @@ def process_audio(
             # Low band path: time-domain only (mono-maker + saturation)
             # This keeps bass frequencies in the time domain for better transient response
             # NO STFT processing - bypasses OLA STFT pipeline entirely (from M9)
-            low_processed = make_mono_lowband(soft_tube(low_aligned, drive=lowband_drive))
+            low_saturated = soft_tube(low_aligned, drive=lowband_drive)
+            # Apply mono_strength: 1.0 = full mono, 0.0 = bypass mono-maker
+            if mono_strength >= 1.0:
+                low_processed = make_mono_lowband(low_saturated)
+            elif mono_strength > 0.0:
+                low_mono = make_mono_lowband(low_saturated)
+                low_processed = (mono_strength * low_mono) + ((1.0 - mono_strength) * low_saturated)
+            else:
+                low_processed = low_saturated
+            # Apply low-band output trim
+            if low_trim != 0.0:
+                low_processed = low_processed * (10.0 ** (low_trim / 20.0))
             low_processed = low_processed.astype(np.float32)
-            
+
             # High band path: full OLA-compliant STFT pipeline (spectral quantization, etc.)
             # Uses updated OLA STFT/ISTFT from stft_utils.py
             # In passthrough_test mode, this performs transparent STFT->ISTFT roundtrip
@@ -943,8 +1010,12 @@ def process_audio(
                 spectral_fx_mode=spectral_fx_mode,
                 spectral_fx_strength=spectral_fx_strength,
                 spectral_fx_params=spectral_fx_params,
+                spectral_freeze=spectral_freeze,
+                formant_shift=formant_shift,
+                harmonic_lock_hz=harmonic_lock_hz,
+                output_trim_db=output_trim_db,
             )
-            
+
             # Recombine bands: mixed output = low_band_processed + high_band_processed
             # Both bands are correctly reconstructed (low: time-domain, high: OLA-compliant ISTFT)
             x_out = low_processed + processed_high
@@ -993,6 +1064,10 @@ def process_audio(
                 spectral_fx_mode=spectral_fx_mode,
                 spectral_fx_strength=spectral_fx_strength,
                 spectral_fx_params=spectral_fx_params,
+                spectral_freeze=spectral_freeze,
+                formant_shift=formant_shift,
+                harmonic_lock_hz=harmonic_lock_hz,
+                output_trim_db=output_trim_db,
             )
             
             # Add input tap to match expected structure
@@ -1001,9 +1076,16 @@ def process_audio(
                 **taps_band,
             }
         
+        # Delta listen (M13): output = input - processed (hear what was removed)
+        if delta_listen:
+            min_len = min(len(tap_input), len(x_out))
+            x_out = tap_input[:min_len] - x_out[:min_len]
+            x_out = x_out.astype(np.float32)
+            taps["output"] = x_out.copy()
+
         total_end = time.perf_counter()
         timing.total = total_end - total_start
-        
+
         # Print timing log line with preview mode indicator
         mode_str = "preview" if preview_enabled else "full"
         print(

@@ -201,6 +201,60 @@ def build_target_bins_for_freqs(
     return target_bins
 
 
+def build_harmonic_target_bins(
+    freqs: np.ndarray,
+    fundamental_hz: float,
+    n_harmonics: int = 32,
+) -> np.ndarray:
+    """
+    Build target bin mapping based on a harmonic series of a fundamental frequency.
+
+    Each frequency bin is attracted to the nearest harmonic (f × n) of the
+    given fundamental. This is used for harmonic locking (M12.3).
+
+    Parameters
+    ----------
+    freqs : np.ndarray
+        Frequency per bin (1D), shape (n_bins,).
+    fundamental_hz : float
+        Fundamental frequency in Hz.
+    n_harmonics : int
+        Number of harmonics to consider (including fundamental).
+
+    Returns
+    -------
+    target_bins : np.ndarray[int] of shape (n_bins,)
+    """
+    freqs = np.asarray(freqs, dtype=float)
+    if fundamental_hz <= 0.0:
+        return np.arange(len(freqs), dtype=int)
+
+    # Build harmonic frequencies: f, 2f, 3f, ...
+    harmonics = fundamental_hz * np.arange(1, n_harmonics + 1, dtype=float)
+
+    # Filter harmonics to those within the frequency range
+    max_freq = float(np.max(freqs[freqs > 0])) if np.any(freqs > 0) else 24000.0
+    harmonics = harmonics[harmonics <= max_freq * 1.1]
+
+    if len(harmonics) == 0:
+        return np.arange(len(freqs), dtype=int)
+
+    # For each freq bin, find nearest harmonic
+    # Shape: (n_bins, n_harmonics)
+    dist = np.abs(freqs[:, np.newaxis] - harmonics[np.newaxis, :])
+    nearest_harmonic_idx = np.argmin(dist, axis=1)
+    nearest_harmonic_freq = harmonics[nearest_harmonic_idx]
+
+    # Map each nearest harmonic freq back to the closest FFT bin
+    dist_to_bins = np.abs(nearest_harmonic_freq[:, np.newaxis] - freqs[np.newaxis, :])
+    target_bins = np.argmin(dist_to_bins, axis=1)
+
+    # Keep identity for DC bin
+    target_bins[0] = 0
+
+    return target_bins
+
+
 @numba.njit
 def _apply_smear_numba(
     new_mags: np.ndarray,
@@ -301,10 +355,11 @@ def quantize_spectrum(
     smear: float,
     bin_smoothing: bool,
     smear_radius: int = 2,
+    target_bins: "np.ndarray | None" = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Apply spectral quantization to a single FFT frame.
-    
+
     Vectorized implementation: all operations use NumPy array operations
     instead of Python loops.
 
@@ -329,6 +384,9 @@ def quantize_spectrum(
         If True, apply simple moving-average smoothing to magnitudes after quantization.
     smear_radius : int
         Number of bins on each side of target bin to smear into.
+    target_bins : np.ndarray or None
+        Pre-computed target bin mapping from build_target_bins_for_freqs().
+        If None, computed internally (slower when called per-frame).
 
     Returns
     -------
@@ -352,7 +410,8 @@ def quantize_spectrum(
     if snap_strength <= 0.0 and not bin_smoothing:
         return mags.copy(), phases.copy()
 
-    target_bins = build_target_bins_for_freqs(freqs, key, scale)
+    if target_bins is None:
+        target_bins = build_target_bins_for_freqs(freqs, key, scale)
     n_bins = len(mags)
 
     # Vectorized energy movement
