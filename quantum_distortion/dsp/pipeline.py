@@ -23,6 +23,7 @@ from quantum_distortion.config import (
     DEFAULT_SAMPLE_RATE,
     PREVIEW_ENABLED_DEFAULT,
     PREVIEW_MAX_SECONDS,
+    PipelineConfig,
     ensure_mono_float32,
 )
 from quantum_distortion.dsp.quantizer import quantize_spectrum, build_target_bins_for_freqs, build_harmonic_target_bins
@@ -787,9 +788,15 @@ def process_audio(
     delta_listen: bool = False,
     mono_strength: float = 1.0,
     output_trim_db: float = 0.0,
+    *,
+    pipeline_config: Union[PipelineConfig, None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Main offline processing entry point.
+
+    Can be called either with individual keyword arguments (backward-compatible)
+    or with a PipelineConfig object via pipeline_config=. When pipeline_config
+    is provided, its values override the individual keyword arguments.
 
     Pipeline:
         input
@@ -801,9 +808,12 @@ def process_audio(
           → (optional) limiter
           → dry/wet mix with input
           → (optional) multiband recombination (if use_multiband=True)
-    
+
     Parameters
     ----------
+    pipeline_config : PipelineConfig, optional
+        If provided, overrides all individual keyword arguments with values
+        from the config object. Only audio and sr are still taken as positional.
     preview_enabled : bool, optional
         If True, process only the first PREVIEW_MAX_SECONDS of audio for faster iteration.
         If None, reads from DSP_PREVIEW_MODE environment variable (1/true = enabled, 0/false/absent = disabled).
@@ -825,6 +835,36 @@ def process_audio(
     
     Timing information is logged to stdout at the end of processing, including preview mode status.
     """
+    # Apply PipelineConfig if provided — overrides individual kwargs
+    if pipeline_config is not None:
+        pc = pipeline_config
+        key = pc.key
+        scale = pc.scale
+        snap_strength = pc.snap_strength
+        smear = pc.smear
+        bin_smoothing = pc.bin_smoothing
+        pre_quant = pc.pre_quant
+        post_quant = pc.post_quant
+        distortion_mode = pc.distortion_mode
+        distortion_params = pc.distortion_params
+        limiter_on = pc.limiter_on
+        limiter_ceiling_db = pc.limiter_ceiling_db
+        dry_wet = pc.dry_wet
+        preview_enabled = pc.preview_enabled
+        use_multiband = pc.use_multiband
+        crossover_hz = pc.crossover_hz
+        lowband_drive = pc.lowband_drive
+        passthrough_test = pc.passthrough_test
+        spectral_fx_mode = pc.spectral_fx_mode
+        spectral_fx_strength = pc.spectral_fx_strength
+        spectral_fx_params = pc.spectral_fx_params
+        spectral_freeze = pc.spectral_freeze
+        formant_shift = pc.formant_shift
+        harmonic_lock_hz = pc.harmonic_lock_hz
+        delta_listen = pc.delta_listen
+        mono_strength = pc.mono_strength
+        output_trim_db = pc.output_trim_db
+
     # Determine preview mode: check parameter, then environment variable, then default
     if preview_enabled is None:
         env_preview = os.getenv("DSP_PREVIEW_MODE", "").strip().lower()
