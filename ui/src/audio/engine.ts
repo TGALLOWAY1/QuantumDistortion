@@ -2,11 +2,30 @@
  * Audio Engine - manages the Web Audio graph and AudioWorklet
  */
 
+export type FilterType = 'peak' | 'lowshelf' | 'highshelf' | 'lowpass' | 'highpass';
+
 export interface EQBand {
   freq: number;
   gain: number;
   q: number;
+  type: FilterType;
 }
+
+export type FxType = 'saturate' | 'quantize' | 'delay' | 'modulate' | 'lofi' | 'saturate2';
+
+export interface FxSlot {
+  id: string;
+  type: FxType;
+}
+
+export const FX_CATALOG: Record<FxType, { label: string; color: string }> = {
+  saturate:  { label: 'Saturate',   color: '#c45e3e' },
+  quantize:  { label: 'Quantize',   color: '#4ec48a' },
+  delay:     { label: 'Delay',      color: '#3eafc4' },
+  modulate:  { label: 'Modulate',   color: '#8a5ec4' },
+  lofi:      { label: 'Lo-Fi',      color: '#8a7e5e' },
+  saturate2: { label: 'Saturate 2', color: '#d47a5e' },
+};
 
 export interface EngineParams {
   bypass: boolean;
@@ -17,6 +36,11 @@ export interface EngineParams {
   saturateType: 'tape' | 'tube' | 'wavefold';
   saturateDrive: number;
   saturateTilt: number;
+
+  saturate2Enabled: boolean;
+  saturate2Type: 'tape' | 'tube' | 'wavefold';
+  saturate2Drive: number;
+  saturate2Tilt: number;
 
   quantizeEnabled: boolean;
   quantizeKey: number;
@@ -49,6 +73,11 @@ export const DEFAULT_PARAMS: EngineParams = {
   saturateDrive: 0.3,
   saturateTilt: 0.5,
 
+  saturate2Enabled: true,
+  saturate2Type: 'tape',
+  saturate2Drive: 0.5,
+  saturate2Tilt: 0.5,
+
   quantizeEnabled: false,
   quantizeKey: 0,
   quantizeScale: 'major',
@@ -68,11 +97,11 @@ export const DEFAULT_PARAMS: EngineParams = {
 
   eqEnabled: true,
   eqBands: [
-    { freq: 60, gain: 0, q: 1.0 },
-    { freq: 250, gain: 0, q: 1.0 },
-    { freq: 1000, gain: 0, q: 1.0 },
-    { freq: 4000, gain: 0, q: 1.0 },
-    { freq: 12000, gain: 0, q: 1.0 },
+    { freq: 60, gain: 0, q: 1.0, type: 'lowshelf' },
+    { freq: 250, gain: 0, q: 1.0, type: 'peak' },
+    { freq: 1000, gain: 0, q: 1.0, type: 'peak' },
+    { freq: 4000, gain: 0, q: 1.0, type: 'peak' },
+    { freq: 12000, gain: 0, q: 1.0, type: 'highshelf' },
   ],
 };
 
@@ -144,9 +173,11 @@ export class AudioEngine {
 
     this.sourceNode = this.ctx.createBufferSource();
     this.sourceNode.buffer = this.audioBuffer;
+    this.sourceNode.loop = true;
     this.sourceNode.connect(this.workletNode);
 
     this.sourceNode.onended = () => {
+      // Only fires if stop() was called (since loop=true won't end naturally)
       this.isPlaying = false;
     };
 
@@ -169,13 +200,20 @@ export class AudioEngine {
     this.isPlaying = false;
   }
 
+  restart() {
+    if (!this.audioBuffer) return;
+    this.play(0);
+  }
+
   get playing(): boolean {
     return this.isPlaying;
   }
 
   get currentTime(): number {
     if (!this.ctx || !this.isPlaying) return this.startOffset;
-    return this.startOffset + (this.ctx.currentTime - this.startTime);
+    const elapsed = this.startOffset + (this.ctx.currentTime - this.startTime);
+    const dur = this.audioBuffer?.duration ?? 1;
+    return dur > 0 ? elapsed % dur : 0;
   }
 
   get duration(): number {
