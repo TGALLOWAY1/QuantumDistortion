@@ -46,6 +46,12 @@ export function useAudioEngine() {
     else play();
   }, [isPlaying, play, stop]);
 
+  const restart = useCallback(() => {
+    engineRef.current?.restart();
+    setCurrentTime(0);
+    setIsPlaying(true);
+  }, []);
+
   const seek = useCallback((time: number) => {
     setCurrentTime(time);
     if (isPlaying) {
@@ -89,6 +95,7 @@ export function useAudioEngine() {
     play,
     stop,
     togglePlay,
+    restart,
     seek,
     updateParams,
   };

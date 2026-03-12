@@ -1,8 +1,6 @@
 interface ToolbarProps {
   bypass: boolean;
   onBypassToggle: () => void;
-  dryWet: number;
-  onDryWetChange: (v: number) => void;
   onOpenFile: () => void;
   fileName: string | null;
   isPlaying: boolean;
@@ -22,8 +20,6 @@ function formatTime(seconds: number): string {
 export function Toolbar({
   bypass,
   onBypassToggle,
-  dryWet,
-  onDryWetChange,
   onOpenFile,
   fileName,
   isPlaying,
@@ -112,23 +108,10 @@ export function Toolbar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Amount / Dry-Wet */}
-      <span className="text-xs text-text-secondary">Amount</span>
-      <div className="flex items-center gap-2 w-36">
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={dryWet}
-          onChange={(e) => onDryWetChange(parseFloat(e.target.value))}
-          className="flex-1"
-          style={{
-            background: `linear-gradient(to right, #3eafc4 ${dryWet * 100}%, #2a2a4a ${dryWet * 100}%)`,
-          }}
-        />
-        <span className="text-xs tabular-nums text-text-dim w-8 text-right">
-          {Math.round(dryWet * 100)}%
+      {/* Keyboard shortcuts hint */}
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-text-dim tracking-wide">
+          SPACE play/pause · R restart
         </span>
       </div>
     </div>

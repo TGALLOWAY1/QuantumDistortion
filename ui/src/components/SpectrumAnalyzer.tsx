@@ -38,6 +38,43 @@ function yToGain(y: number, height: number): number {
   return -((y - height / 2) / (height / 2)) * 24;
 }
 
+/** Compute approximate EQ response contribution for a single band at a given frequency */
+function bandResponse(band: EQBand, freq: number): number {
+  const bandType = band.type || 'peak';
+  const octaves = Math.log2(freq / band.freq);
+
+  switch (bandType) {
+    case 'peak': {
+      if (band.gain === 0) return 0;
+      return band.gain * Math.exp(-0.5 * Math.pow(octaves * band.q * 1.5, 2));
+    }
+    case 'lowshelf': {
+      if (band.gain === 0) return 0;
+      // Sigmoid transition: full gain below, zero above
+      const t = 1 / (1 + Math.exp(octaves * band.q * 3));
+      return band.gain * t;
+    }
+    case 'highshelf': {
+      if (band.gain === 0) return 0;
+      // Sigmoid transition: zero below, full gain above
+      const t = 1 / (1 + Math.exp(-octaves * band.q * 3));
+      return band.gain * t;
+    }
+    case 'lowpass': {
+      // Show rolloff above cutoff
+      if (octaves > 0) return -octaves * band.q * 12;
+      return 0;
+    }
+    case 'highpass': {
+      // Show rolloff below cutoff
+      if (octaves < 0) return Math.abs(octaves) * band.q * -12;
+      return 0;
+    }
+    default:
+      return 0;
+  }
+}
+
 export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, height }: SpectrumAnalyzerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -137,19 +174,14 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
     }
 
     // --- EQ curve ---
-    // Draw approximate combined EQ curve
+    // Draw approximate combined EQ curve for all filter types
     ctx.beginPath();
     let started = false;
     for (let px = 0; px < width; px += 2) {
       const freq = xToFreq(px, width);
       let totalGain = 0;
       for (let b = 0; b < eqBands.length; b++) {
-        const band = eqBands[b];
-        if (band.gain === 0) continue;
-        // Approximate bell curve response
-        const octaves = Math.log2(freq / band.freq);
-        const response = band.gain * Math.exp(-0.5 * Math.pow(octaves * band.q * 1.5, 2));
-        totalGain += response;
+        totalGain += bandResponse(eqBands[b], freq);
       }
       const y = gainToY(totalGain, height);
       if (!started) {

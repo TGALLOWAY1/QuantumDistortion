@@ -5,6 +5,7 @@ interface EffectModuleProps {
   color: string;
   enabled: boolean;
   onToggle: () => void;
+  onRemove?: () => void;
   subtitle?: string;
   subtitleOptions?: string[];
   onSubtitleChange?: (val: string) => void;
@@ -17,6 +18,7 @@ export function EffectModule({
   color,
   enabled,
   onToggle,
+  onRemove,
   subtitle,
   subtitleOptions,
   onSubtitleChange,
@@ -54,6 +56,15 @@ export function EffectModule({
         </span>
         <div className="flex-1" />
         {icon && <span className="text-text-secondary text-sm">{icon}</span>}
+        {onRemove && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            className="w-5 h-5 rounded-full flex items-center justify-center text-text-dim hover:text-red-400 hover:bg-red-400/10 transition-colors text-xs leading-none"
+            title="Remove module"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       {/* Subtitle / type selector */}
