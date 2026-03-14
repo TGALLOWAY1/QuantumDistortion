@@ -106,3 +106,26 @@ def test_bin_smoothing_changes_shape_not_energy() -> None:
     # Energy should be approximately conserved
     assert np.isclose(np.sum(new_mags), np.sum(mags), atol=1e-6)
 
+
+def test_active_mask_preserves_out_of_band_bins() -> None:
+    freqs = np.array([0.0, 430.0, 440.0, 450.0], dtype=float)
+    mags = np.array([0.0, 1.0, 0.0, 1.0], dtype=float)
+    phases = np.zeros_like(mags)
+    active_mask = np.array([False, True, False, False], dtype=bool)
+
+    new_mags, _ = quantize_spectrum(
+        mags=mags,
+        phases=phases,
+        freqs=freqs,
+        key="A",
+        scale="minor",
+        snap_strength=1.0,
+        smear=0.0,
+        bin_smoothing=False,
+        active_mask=active_mask,
+    )
+
+    assert np.isclose(new_mags[1], 0.0, atol=1e-6)
+    assert np.isclose(new_mags[2], 1.0, atol=1e-6)
+    assert np.isclose(new_mags[3], mags[3], atol=1e-6)
+    assert np.isclose(np.sum(new_mags), np.sum(mags), atol=1e-6)

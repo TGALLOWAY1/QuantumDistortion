@@ -4,7 +4,7 @@
  * Runs in the audio thread. Implements:
  * - Wavefold distortion
  * - Soft-tube saturation (two independent stages)
- * - Spectral quantization (FFT-based pitch snapping)
+ * - Body-band pitch quantization with detector filtering and generated sub
  * - Bitcrush / Lo-Fi
  * - Simple delay + feedback
  * - Chorus modulation
@@ -54,6 +54,13 @@ class QuantumProcessor extends AudioWorkletProcessor {
       quantizeKey: 0,           // 0=C, 1=C#, etc.
       quantizeScale: 'major',
       quantizeStrength: 0.7,
+      quantizeSubEnabled: true,
+      quantizeSubSource: 'root',
+      quantizeSubNote: 0,
+      quantizeSubDegree: 0,
+      quantizeSubOctave: 2,
+      quantizeSubLevel: 0.35,
+      quantizeAirMix: 1.0,
 
       // Delay
       delayEnabled: false,
@@ -107,18 +114,30 @@ class QuantumProcessor extends AudioWorkletProcessor {
     this.quantizeBufSize = 4096;
     this.quantizeBuffers = Array.from({ length: MAX_CHANNELS }, () => new Float32Array(4096));
     this.quantizeWritePos = new Array(MAX_CHANNELS).fill(0);
-    // Two overlapping grains per channel: [channel][grain] = fractional read position
-    this.quantizeGrainReadPos = Array.from({ length: MAX_CHANNELS }, () => [0.0, 0.0]);
-    // Grain phase counters: [channel][grain], offset by half grain size
-    this.quantizeGrainCounter = Array.from({ length: MAX_CHANNELS }, () => [0, 512]);
+    this.quantizeDelayTaps = Array.from(
+      { length: MAX_CHANNELS },
+      () => [this.quantizeGrainSize * 0.25, this.quantizeGrainSize * 0.75],
+    );
     this.quantizeTargetRatio = 1.0;
     this.quantizeSmoothedRatio = 1.0;
-
-    // Precompute Hann window for grain-based pitch shifting
-    this.hannWindow = new Float32Array(1024);
-    for (let i = 0; i < 1024; i++) {
-      this.hannWindow[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / 1024));
-    }
+    this.quantizeHeldTargetFreq = 0.0;
+    this.quantizeCandidateTargetFreq = 0.0;
+    this.quantizeCandidateCount = 0;
+    this.quantizeMissingCount = 3;
+    this.quantizeDetectorEnv = 0.0;
+    this.quantizeSubPhase = 0.0;
+    this.quantizeSubGain = 0.0;
+    this.quantizeSubCutHz = 110.0;
+    this.quantizeAirCutHz = 5000.0;
+    this.quantizeDetectorHighHz = 3000.0;
+    this.quantizeMinConfidence = 0.72;
+    this.quantizeMinEnv = 0.01;
+    this.quantizeChangeCents = 40.0;
+    this.quantizeConfirmFrames = 3;
+    this.quantizeReleaseFrames = 2;
+    this.quantizeLowState = new Array(MAX_CHANNELS).fill(0.0);
+    this.quantizeBodyLpState = new Array(MAX_CHANNELS).fill(0.0);
+    this.quantizeDetectorLpState = new Array(MAX_CHANNELS).fill(0.0);
 
     // YIN pitch detection buffers
     this.yinBufSize = 2048;
@@ -300,6 +319,93 @@ class QuantumProcessor extends AudioWorkletProcessor {
     return sample;
   }
 
+  onePoleLowpass(sample, cutoff, stateArray, ch) {
+    const safeCutoff = Math.max(10, Math.min(cutoff, sampleRate * 0.45));
+    const coeff = Math.exp(-2 * Math.PI * safeCutoff / sampleRate);
+    const next = (1 - coeff) * sample + coeff * stateArray[ch];
+    stateArray[ch] = next;
+    return next;
+  }
+
+  splitQuantizeBands(sample, ch) {
+    const sub = this.onePoleLowpass(sample, this.quantizeSubCutHz, this.quantizeLowState, ch);
+    const bodyLp = this.onePoleLowpass(sample, this.quantizeAirCutHz, this.quantizeBodyLpState, ch);
+    const body = bodyLp - sub;
+    const air = sample - bodyLp;
+    const detector = this.onePoleLowpass(body, this.quantizeDetectorHighHz, this.quantizeDetectorLpState, ch);
+    return { sub, body, air, detector };
+  }
+
+  centsBetween(freqA, freqB) {
+    if (freqA <= 0 || freqB <= 0) return 0;
+    return 1200 * Math.log2(freqA / freqB);
+  }
+
+  updateQuantizePitchState(pitch, confidence) {
+    if (pitch > 0 && confidence >= this.quantizeMinConfidence && this.quantizeDetectorEnv >= this.quantizeMinEnv) {
+      this.detectedPitch = pitch;
+      const target = this.nearestScaleFreq(
+        pitch, this.params.quantizeKey, this.params.quantizeScale
+      );
+
+      if (this.quantizeHeldTargetFreq <= 0) {
+        this.quantizeHeldTargetFreq = target;
+        this.quantizeCandidateTargetFreq = 0;
+        this.quantizeCandidateCount = 0;
+      } else {
+        const deltaCents = Math.abs(this.centsBetween(target, this.quantizeHeldTargetFreq));
+        if (deltaCents >= this.quantizeChangeCents) {
+          const candidateDelta = this.quantizeCandidateTargetFreq > 0
+            ? Math.abs(this.centsBetween(target, this.quantizeCandidateTargetFreq))
+            : Infinity;
+          if (this.quantizeCandidateTargetFreq > 0 && candidateDelta < 20) {
+            this.quantizeCandidateCount++;
+          } else {
+            this.quantizeCandidateTargetFreq = target;
+            this.quantizeCandidateCount = 1;
+          }
+          if (this.quantizeCandidateCount >= this.quantizeConfirmFrames) {
+            this.quantizeHeldTargetFreq = this.quantizeCandidateTargetFreq;
+            this.quantizeCandidateTargetFreq = 0;
+            this.quantizeCandidateCount = 0;
+          }
+        } else {
+          this.quantizeCandidateTargetFreq = 0;
+          this.quantizeCandidateCount = 0;
+        }
+      }
+
+      const rawRatio = this.quantizeHeldTargetFreq / pitch;
+      this.quantizeTargetRatio = Math.max(0.5, Math.min(2.0, rawRatio));
+      this.quantizeMissingCount = 0;
+      return;
+    }
+
+    this.quantizeMissingCount++;
+    if (this.quantizeMissingCount > this.quantizeReleaseFrames) {
+      this.quantizeHeldTargetFreq = 0;
+      this.quantizeCandidateTargetFreq = 0;
+      this.quantizeCandidateCount = 0;
+      this.quantizeTargetRatio = 1.0;
+    }
+  }
+
+  computeSubFrequency() {
+    const scale = SCALES[this.params.quantizeScale] || SCALES.major;
+    let pitchClass = this.params.quantizeKey;
+
+    if (this.params.quantizeSubSource === 'manual') {
+      pitchClass = this.params.quantizeSubNote;
+    } else if (this.params.quantizeSubSource === 'scale_degree') {
+      const degree = Math.max(0, Math.min(scale.length - 1, Math.round(this.params.quantizeSubDegree)));
+      pitchClass = (this.params.quantizeKey + scale[degree]) % 12;
+    }
+
+    const octave = Math.max(0, Math.min(4, Math.round(this.params.quantizeSubOctave)));
+    const midi = 12 * (octave + 1) + pitchClass;
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
   // --- YIN pitch detection algorithm ---
   // Returns detected pitch in Hz, or 0 if no pitch found
   detectPitch() {
@@ -344,7 +450,7 @@ class QuantumProcessor extends AudioWorkletProcessor {
       }
     }
 
-    if (tauEstimate === -1) return 0; // No pitch detected
+    if (tauEstimate === -1) return { pitch: 0, confidence: 0 };
 
     // Step 4: Parabolic interpolation for sub-sample accuracy
     let betterTau = tauEstimate;
@@ -360,11 +466,12 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
     // Step 5: Convert period to Hz
     const pitch = sampleRate / betterTau;
+    const confidence = Math.max(0, Math.min(1, 1 - temp[tauEstimate]));
 
     // Sanity check: musical range only
-    if (pitch < 50 || pitch > 4000) return 0;
+    if (pitch < 50 || pitch > 4000) return { pitch: 0, confidence: 0 };
 
-    return pitch;
+    return { pitch, confidence };
   }
 
   // Find the nearest frequency in the given musical scale
@@ -398,50 +505,42 @@ class QuantumProcessor extends AudioWorkletProcessor {
     return 440 * Math.pow(2, (bestNote - 69) / 12);
   }
 
-  // Grain-based pitch shifting: dual-grain overlap-add with Hann window
+  // Dual-tap variable-delay pitch shifter tuned for small correction moves
   pitchShiftSample(sample, ch) {
-    const grainSize = this.quantizeGrainSize;
+    const maxDelay = this.quantizeGrainSize;
     const bufSize = this.quantizeBufSize;
     const buf = this.quantizeBuffers[ch];
     const ratio = this.quantizeSmoothedRatio;
+    const slope = 1.0 - ratio;
 
     // Write input sample to circular buffer
     buf[this.quantizeWritePos[ch]] = sample;
-    this.quantizeWritePos[ch] = (this.quantizeWritePos[ch] + 1) & (bufSize - 1);
 
     let out = 0;
+    let weightSum = 0;
 
-    for (let g = 0; g < 2; g++) {
-      // Advance read position by the pitch shift ratio
-      this.quantizeGrainReadPos[ch][g] += ratio;
-      if (this.quantizeGrainReadPos[ch][g] >= bufSize) {
-        this.quantizeGrainReadPos[ch][g] -= bufSize;
+    for (let tap = 0; tap < 2; tap++) {
+      this.quantizeDelayTaps[ch][tap] += slope;
+      while (this.quantizeDelayTaps[ch][tap] < 0) {
+        this.quantizeDelayTaps[ch][tap] += maxDelay;
+      }
+      while (this.quantizeDelayTaps[ch][tap] >= maxDelay) {
+        this.quantizeDelayTaps[ch][tap] -= maxDelay;
       }
 
-      // Advance grain phase counter
-      const phase = this.quantizeGrainCounter[ch][g]++;
-
-      // Reset grain when its window completes
-      if (this.quantizeGrainCounter[ch][g] >= grainSize) {
-        this.quantizeGrainCounter[ch][g] = 0;
-        // Resync read pointer: place it one grain behind the write pointer
-        this.quantizeGrainReadPos[ch][g] =
-          (this.quantizeWritePos[ch] - grainSize + bufSize) & (bufSize - 1);
-      }
-
-      // Read sample with linear interpolation
-      const readPos = this.quantizeGrainReadPos[ch][g];
+      const phase = this.quantizeDelayTaps[ch][tap] / maxDelay;
+      const windowVal = 0.5 * (1 - Math.cos(2 * Math.PI * phase));
+      const readPos = (this.quantizeWritePos[ch] - this.quantizeDelayTaps[ch][tap] + bufSize) % bufSize;
       const idx0 = Math.floor(readPos) & (bufSize - 1);
       const idx1 = (idx0 + 1) & (bufSize - 1);
-      const frac = readPos - Math.floor(readPos);
+      const frac = readPos - idx0;
       const readSample = buf[idx0] * (1 - frac) + buf[idx1] * frac;
-
-      // Apply Hann window (two grains sum to unity at 50% overlap)
-      const windowVal = this.hannWindow[phase < grainSize ? phase : 0];
       out += readSample * windowVal;
+      weightSum += windowVal;
     }
 
-    return out;
+    this.quantizeWritePos[ch] = (this.quantizeWritePos[ch] + 1) & (bufSize - 1);
+    return weightSum > 1e-6 ? out / weightSum : 0;
   }
 
   process(inputs, outputs, _parameters) {
@@ -476,47 +575,15 @@ class QuantumProcessor extends AudioWorkletProcessor {
       this.computeEQCoeffs();
     }
 
-    // --- Pitch detection pre-pass (feeds channel 0 into YIN, updates shift ratio) ---
-    if (this.params.quantizeEnabled) {
-      const inputCh0 = input[0];
-      for (let i = 0; i < len; i++) {
-        // Feed raw input into YIN buffer for pitch analysis
-        this.yinBuffer[this.yinWritePos] = inputCh0[i];
-        this.yinWritePos = (this.yinWritePos + 1) & (this.yinBufSize - 1);
+    for (let i = 0; i < len; i++) {
+      let monoSubSample = 0;
 
-        this.pitchDetectCounter++;
-        if (this.pitchDetectCounter >= this.pitchDetectInterval) {
-          this.pitchDetectCounter = 0;
-          const pitch = this.detectPitch();
-          if (pitch > 0) {
-            this.detectedPitch = pitch;
-            const target = this.nearestScaleFreq(
-              pitch, this.params.quantizeKey, this.params.quantizeScale
-            );
-            const rawRatio = target / pitch;
-            // Clamp to ±1 octave for safety
-            this.quantizeTargetRatio = Math.max(0.5, Math.min(2.0, rawRatio));
-          } else {
-            // No pitch detected — smoothly return to pass-through
-            this.quantizeTargetRatio = 1.0;
-          }
-        }
+      for (let ch = 0; ch < numChannels; ch++) {
+        const channelIn = input[ch];
+        const channelOut = output[ch];
+        const delayBuf = this.delayBuffers[ch];
+        const eqChStates = this.eqStates[ch];
 
-        // Smooth the shift ratio (strength-adjusted)
-        const strength = this.params.quantizeStrength;
-        const effectiveTarget = 1.0 + strength * (this.quantizeTargetRatio - 1.0);
-        this.quantizeSmoothedRatio += (effectiveTarget - this.quantizeSmoothedRatio) * 0.005;
-      }
-    }
-
-    // --- Process each channel independently for true stereo ---
-    for (let ch = 0; ch < numChannels; ch++) {
-      const channelIn = input[ch];
-      const channelOut = output[ch];
-      const delayBuf = this.delayBuffers[ch];
-      const eqChStates = this.eqStates[ch];
-
-      for (let i = 0; i < len; i++) {
         let sample = channelIn[i];
         const dry = sample;
 
@@ -524,7 +591,6 @@ class QuantumProcessor extends AudioWorkletProcessor {
         if (this.params.eqEnabled) {
           for (let b = 0; b < 5; b++) {
             const bandType = this.params.eqBands[b].type || 'peak';
-            // Always apply lowpass/highpass; for peak/shelf only apply if gain != 0
             if (bandType === 'lowpass' || bandType === 'highpass' || this.params.eqBands[b].gain !== 0) {
               sample = this.biquad(sample, this.eqCoeffs[b], eqChStates[b]);
             }
@@ -541,9 +607,56 @@ class QuantumProcessor extends AudioWorkletProcessor {
           );
         }
 
-        // --- Spectral Quantize (autotune pitch correction) ---
         if (this.params.quantizeEnabled) {
-          sample = this.pitchShiftSample(sample, ch);
+          const bands = this.splitQuantizeBands(sample, ch);
+
+          if (ch === 0) {
+            const detectorAbs = Math.abs(bands.detector);
+            const envLerp = detectorAbs > this.quantizeDetectorEnv ? 0.08 : 0.005;
+            this.quantizeDetectorEnv += (detectorAbs - this.quantizeDetectorEnv) * envLerp;
+
+            this.yinBuffer[this.yinWritePos] = bands.detector;
+            this.yinWritePos = (this.yinWritePos + 1) & (this.yinBufSize - 1);
+            this.pitchDetectCounter++;
+            if (this.pitchDetectCounter >= this.pitchDetectInterval) {
+              this.pitchDetectCounter = 0;
+              const detection = this.detectPitch();
+              this.updateQuantizePitchState(detection.pitch, detection.confidence);
+            }
+
+            const strength = this.params.quantizeStrength;
+            const effectiveTarget = 1.0 + strength * (this.quantizeTargetRatio - 1.0);
+            this.quantizeSmoothedRatio += (effectiveTarget - this.quantizeSmoothedRatio) * 0.01;
+            this.quantizeSmoothedRatio = Math.max(0.5, Math.min(2.0, this.quantizeSmoothedRatio));
+
+            if (this.params.quantizeSubEnabled) {
+              const subFreq = this.computeSubFrequency();
+              const targetGain = Math.min(1.0, this.quantizeDetectorEnv * 4.0) * this.params.quantizeSubLevel;
+              this.quantizeSubGain += (targetGain - this.quantizeSubGain) * 0.02;
+              this.quantizeSubPhase += (2 * Math.PI * subFreq) / sampleRate;
+              if (this.quantizeSubPhase > 2 * Math.PI) this.quantizeSubPhase -= 2 * Math.PI;
+              monoSubSample = Math.sin(this.quantizeSubPhase) * this.quantizeSubGain;
+            } else {
+              this.quantizeSubGain += (0 - this.quantizeSubGain) * 0.05;
+              monoSubSample = 0;
+            }
+          }
+
+          const shiftedBody = this.pitchShiftSample(bands.body, ch);
+          const correctedBody = Math.abs(this.quantizeSmoothedRatio - 1.0) < 0.015
+            ? bands.body
+            : shiftedBody;
+          const lowOut = this.params.quantizeSubEnabled ? (bands.sub * 0.15) + monoSubSample : bands.sub;
+          sample = lowOut + correctedBody + (bands.air * this.params.quantizeAirMix);
+        } else if (ch === 0) {
+          this.quantizeDetectorEnv *= 0.995;
+          this.quantizeSubGain *= 0.95;
+          this.quantizeTargetRatio += (1.0 - this.quantizeTargetRatio) * 0.05;
+          this.quantizeSmoothedRatio += (1.0 - this.quantizeSmoothedRatio) * 0.05;
+          this.quantizeHeldTargetFreq = 0.0;
+          this.quantizeCandidateTargetFreq = 0.0;
+          this.quantizeCandidateCount = 0;
+          this.quantizeMissingCount = this.quantizeReleaseFrames + 1;
         }
 
         // --- Delay ---
@@ -558,9 +671,8 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
         // --- Chorus Modulation ---
         if (this.params.modEnabled) {
-          const depth = this.params.modDepth * 0.005 * sampleRate; // max ~5ms
+          const depth = this.params.modDepth * 0.005 * sampleRate;
           const lfoVal = Math.sin(2 * Math.PI * this.chorusPhase);
-
           const modDelay = Math.floor(depth * (1 + lfoVal) + 0.002 * sampleRate);
           const modReadIndex = (this.delayWriteIndexes[ch] - modDelay + delayBuf.length) % delayBuf.length;
           const modSample = delayBuf[modReadIndex] || 0;
@@ -569,7 +681,6 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
         // --- Lo-Fi ---
         if (this.params.lofiEnabled) {
-          // Bitcrush-style sample rate reduction
           const wear = this.params.lofiWear;
           const holdLength = Math.max(1, Math.floor(1 + wear * 15));
           this.lofiHoldCounters[ch]++;
@@ -579,7 +690,6 @@ class QuantumProcessor extends AudioWorkletProcessor {
           }
           sample = this.lofiHoldSamples[ch];
 
-          // Wobble: pitch-drift LFO (subtle gain modulation)
           const wobble = this.params.lofiWobble;
           if (wobble > 0.01) {
             const wobbleLFO = Math.sin(this.chorusPhase * 0.3 * 2 * Math.PI) * wobble * 0.15;
@@ -597,22 +707,13 @@ class QuantumProcessor extends AudioWorkletProcessor {
           );
         }
 
-        // --- Dry/Wet Mix ---
         sample = dry * (1 - this.params.dryWet) + sample * this.params.dryWet;
-
-        // --- Master Gain ---
         sample *= this.params.masterGain;
-
-        // Soft clip output
         sample = Math.tanh(sample);
-
         channelOut[i] = sample;
       }
-    }
 
-    // Advance chorus LFO once per frame (shared across channels)
-    if (this.params.modEnabled || this.params.lofiEnabled) {
-      for (let i = 0; i < len; i++) {
+      if (this.params.modEnabled || this.params.lofiEnabled) {
         this.chorusPhase += this.params.modRate / sampleRate;
         if (this.chorusPhase > 1) this.chorusPhase -= 1;
       }

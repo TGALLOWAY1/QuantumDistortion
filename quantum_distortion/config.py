@@ -9,6 +9,8 @@ import numpy as np
 # ---------------------------------------------------------------------------
 ScaleName = Literal["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
 TapSource = Literal["input", "pre_quant", "post_dist", "output"]
+QuantizeMode = Literal["autotune_v1", "spectral_bins"]
+SubSourceName = Literal["root", "manual", "scale_degree"]
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,16 @@ DEFAULT_DISTORTION_MODE = "wavefold"
 DEFAULT_LIMITER_ON = True
 DEFAULT_LIMITER_CEILING_DB = -1.0
 DEFAULT_DRY_WET = 1.0
+DEFAULT_QUANTIZE_MODE: QuantizeMode = "autotune_v1"
+DEFAULT_SUB_ENABLED = True
+DEFAULT_SUB_SOURCE: SubSourceName = "root"
+DEFAULT_SUB_NOTE = "C"
+DEFAULT_SUB_SCALE_DEGREE = 0
+DEFAULT_SUB_OCTAVE = 2
+DEFAULT_SUB_LEVEL = 0.35
+DEFAULT_SUB_CUT_HZ = 110.0
+DEFAULT_AIR_CUT_HZ = 5000.0
+DEFAULT_AIR_MIX = 1.0
 
 # Preview render mode: limits processing to first N seconds for faster iteration
 # Set DSP_PREVIEW_MODE=1 environment variable to enable, or pass preview_enabled=True
@@ -62,11 +74,23 @@ class PipelineConfig:
     scale: str = DEFAULT_SCALE
 
     # Quantization
+    quantize_mode: QuantizeMode = DEFAULT_QUANTIZE_MODE
     snap_strength: float = DEFAULT_SNAP_STRENGTH
     smear: float = DEFAULT_SMEAR
     bin_smoothing: bool = DEFAULT_BIN_SMOOTHING
     pre_quant: bool = True
     post_quant: bool = True
+
+    # Autotune V1 routing
+    sub_enabled: bool = DEFAULT_SUB_ENABLED
+    sub_source: SubSourceName = DEFAULT_SUB_SOURCE
+    sub_note: str = DEFAULT_SUB_NOTE
+    sub_scale_degree: int = DEFAULT_SUB_SCALE_DEGREE
+    sub_octave: int = DEFAULT_SUB_OCTAVE
+    sub_level: float = DEFAULT_SUB_LEVEL
+    sub_cut_hz: float = DEFAULT_SUB_CUT_HZ
+    air_cut_hz: float = DEFAULT_AIR_CUT_HZ
+    air_mix: float = DEFAULT_AIR_MIX
 
     # Distortion
     distortion_mode: str = DEFAULT_DISTORTION_MODE
@@ -113,6 +137,7 @@ class PipelineConfig:
         return cls(
             key=str(p["key"]),
             scale=str(p["scale"]),
+            quantize_mode=DEFAULT_QUANTIZE_MODE,
             snap_strength=float(p["snap_strength"]),
             smear=float(p["smear"]),
             bin_smoothing=bool(p["bin_smoothing"]),

@@ -46,6 +46,13 @@ export interface EngineParams {
   quantizeKey: number;
   quantizeScale: string;
   quantizeStrength: number;
+  quantizeSubEnabled: boolean;
+  quantizeSubSource: 'root' | 'manual' | 'scale_degree';
+  quantizeSubNote: number;
+  quantizeSubDegree: number;
+  quantizeSubOctave: number;
+  quantizeSubLevel: number;
+  quantizeAirMix: number;
 
   delayEnabled: boolean;
   delayTime: number;
@@ -82,6 +89,13 @@ export const DEFAULT_PARAMS: EngineParams = {
   quantizeKey: 0,
   quantizeScale: 'major',
   quantizeStrength: 0.7,
+  quantizeSubEnabled: true,
+  quantizeSubSource: 'root',
+  quantizeSubNote: 0,
+  quantizeSubDegree: 0,
+  quantizeSubOctave: 2,
+  quantizeSubLevel: 0.35,
+  quantizeAirMix: 1.0,
 
   delayEnabled: false,
   delayTime: 0.25,
