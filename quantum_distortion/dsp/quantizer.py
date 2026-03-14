@@ -351,6 +351,7 @@ def quantize_spectrum(
     bin_smoothing: bool,
     smear_radius: int = 2,
     target_bins: "np.ndarray | None" = None,
+    active_mask: "np.ndarray | None" = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Apply spectral quantization to a single FFT frame.
@@ -382,6 +383,9 @@ def quantize_spectrum(
     target_bins : np.ndarray or None
         Pre-computed target bin mapping from build_target_bins_for_freqs().
         If None, computed internally (slower when called per-frame).
+    active_mask : np.ndarray or None
+        Optional boolean mask selecting which bins are eligible for movement.
+        Bins outside the mask are preserved unchanged.
 
     Returns
     -------
@@ -408,12 +412,23 @@ def quantize_spectrum(
     if target_bins is None:
         target_bins = build_target_bins_for_freqs(freqs, key, scale)
     n_bins = len(mags)
+    if active_mask is not None:
+        active_mask = np.asarray(active_mask, dtype=bool)
+        if active_mask.shape != mags.shape:
+            raise ValueError("active_mask must have the same shape as mags")
+    else:
+        active_mask = np.ones_like(mags, dtype=bool)
 
     # Vectorized energy movement
     # Compute energy to move from each source bin
     energy_to_move = mags * snap_strength
     # Mask for valid moves (positive energy, valid target bins)
-    valid_mask = (energy_to_move > 0.0) & (target_bins >= 0) & (target_bins < n_bins)
+    valid_mask = (
+        (energy_to_move > 0.0)
+        & (target_bins >= 0)
+        & (target_bins < n_bins)
+        & active_mask
+    )
     
     # Remove energy from source bins (vectorized)
     new_mags = mags.copy() - np.where(valid_mask, energy_to_move, 0.0)
@@ -512,4 +527,3 @@ def quantize_spectrum(
         new_mags = convolve1d(new_mags, smoothing_kernel, axis=0, mode="nearest")
 
     return new_mags, new_phases
-

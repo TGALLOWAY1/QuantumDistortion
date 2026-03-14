@@ -5,7 +5,6 @@ from typing import Tuple, Union
 
 
 import numpy as np
-import librosa
 
 
 from quantum_distortion.config import ScaleName
@@ -13,6 +12,7 @@ from quantum_distortion.dsp.quantizer import (
     freq_to_midi,
     build_scale_notes,
 )
+from quantum_distortion.dsp.stft_utils import stft_mono
 
 
 def _nearest_scale_midi(
@@ -88,15 +88,13 @@ def avg_cents_offset_from_scale(
         hop_length = frame_length // 4
 
     # STFT
-    S = librosa.stft(
-        y=x,
+    S, freqs = stft_mono(
+        audio=x,
+        sr=sr,
         n_fft=frame_length,
-        hop_length=hop_length,
-        window="hann",
         center=True,
     )
     mags = np.abs(S)
-    freqs = librosa.fft_frequencies(sr=sr, n_fft=frame_length)
 
     # Convert to dB for thresholding
     eps = 1e-12
@@ -142,4 +140,3 @@ def avg_cents_offset_from_scale(
     per_peak_arr = np.array(per_peak_abs_cents, dtype=float)
     avg_abs_cents = float(np.mean(per_peak_arr))
     return avg_abs_cents, per_peak_arr
-

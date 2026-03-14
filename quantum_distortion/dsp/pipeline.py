@@ -16,6 +16,16 @@ from quantum_distortion.config import (
     DEFAULT_SNAP_STRENGTH,
     DEFAULT_SMEAR,
     DEFAULT_BIN_SMOOTHING,
+    DEFAULT_QUANTIZE_MODE,
+    DEFAULT_SUB_ENABLED,
+    DEFAULT_SUB_SOURCE,
+    DEFAULT_SUB_NOTE,
+    DEFAULT_SUB_SCALE_DEGREE,
+    DEFAULT_SUB_OCTAVE,
+    DEFAULT_SUB_LEVEL,
+    DEFAULT_SUB_CUT_HZ,
+    DEFAULT_AIR_CUT_HZ,
+    DEFAULT_AIR_MIX,
     DEFAULT_DISTORTION_MODE,
     DEFAULT_LIMITER_ON,
     DEFAULT_LIMITER_CEILING_DB,
@@ -24,9 +34,12 @@ from quantum_distortion.config import (
     PREVIEW_ENABLED_DEFAULT,
     PREVIEW_MAX_SECONDS,
     PipelineConfig,
+    QuantizeMode,
+    SubSourceName,
     ensure_mono_float32,
 )
 from quantum_distortion.dsp.quantizer import quantize_spectrum, build_target_bins_for_freqs, build_harmonic_target_bins
+from quantum_distortion.dsp.autotune import AutotuneV1Config, apply_autotune_v1
 from quantum_distortion.dsp.distortion import apply_distortion
 from quantum_distortion.dsp.limiter import peak_limiter
 from quantum_distortion.dsp.stft_utils import stft_mono, istft_mono
@@ -148,6 +161,68 @@ class RenderTiming:
     total: float = 0.0
 
 
+def _build_quantize_band_mask(
+    freqs: np.ndarray,
+    min_hz: float,
+    max_hz: float,
+) -> np.ndarray:
+    freqs = np.asarray(freqs, dtype=float)
+    mask = np.ones_like(freqs, dtype=bool)
+    if min_hz > 0.0:
+        mask &= freqs >= min_hz
+    if max_hz > 0.0:
+        mask &= freqs <= max_hz
+    if mask.size:
+        mask[0] = False
+    return mask
+
+
+def _finalize_single_band_output(
+    x_post_quant: np.ndarray,
+    sr: int,
+    limiter_on: bool,
+    limiter_ceiling_db: float,
+    dry_wet: float,
+    tap_input: np.ndarray,
+    output_trim_db: float,
+    n_samples: int,
+    tap_pre_quant: np.ndarray,
+    tap_post_dist: np.ndarray,
+) -> tuple[np.ndarray, Dict[str, np.ndarray]]:
+    if limiter_on:
+        x_limited, _gain = peak_limiter(
+            x_post_quant,
+            sr=sr,
+            ceiling_db=limiter_ceiling_db,
+            lookahead_ms=5.0,
+            release_ms=30.0,
+        )
+    else:
+        x_limited = x_post_quant.copy()
+
+    dry_wet = float(np.clip(dry_wet, 0.0, 1.0))
+    x_out = (dry_wet * x_limited) + ((1.0 - dry_wet) * tap_input)
+
+    if output_trim_db != 0.0:
+        trim_gain = 10.0 ** (output_trim_db / 20.0)
+        x_out = x_out * trim_gain
+
+    x_out = x_out.astype(np.float32)
+    if x_out.shape[0] != n_samples:
+        if x_out.shape[0] > n_samples:
+            x_out = x_out[:n_samples]
+        else:
+            pad = np.zeros(n_samples - x_out.shape[0], dtype=np.float32)
+            x_out = np.concatenate([x_out, pad], axis=0)
+
+    taps = {
+        "pre_quant": tap_pre_quant,
+        "post_dist": tap_post_dist,
+        "output": x_out.copy(),
+    }
+    return x_out, taps
+
+
 
 
 def _apply_spectral_quantization_to_stft(
@@ -166,6 +241,8 @@ def _apply_spectral_quantization_to_stft(
     spectral_freeze: bool = False,
     formant_shift: float = 0.0,
     harmonic_lock_hz: float = 0.0,
+    quantize_min_hz: float = DEFAULT_SUB_CUT_HZ,
+    quantize_max_hz: float = DEFAULT_AIR_CUT_HZ,
 ) -> np.ndarray:
     """
     Apply spectral quantization directly to an existing STFT matrix S.
@@ -201,6 +278,8 @@ def _apply_spectral_quantization_to_stft(
             cached_target_bins = build_harmonic_target_bins(freqs, harmonic_lock_hz)
         else:
             cached_target_bins = build_target_bins_for_freqs(freqs, key, scale)
+
+        active_mask = _build_quantize_band_mask(freqs, quantize_min_hz, quantize_max_hz)
 
         # Spectral freeze (M12.1): capture first-frame magnitudes
         frozen_mags = None
@@ -244,6 +323,7 @@ def _apply_spectral_quantization_to_stft(
                 smear=smear,
                 bin_smoothing=bin_smoothing,
                 target_bins=cached_target_bins,
+                active_mask=active_mask,
             )
 
             mags[:, t] = new_mags
@@ -341,6 +421,7 @@ def _process_single_band(
     sr: int,
     key: str,
     scale: str,
+    quantize_mode: QuantizeMode,
     snap_strength: float,
     smear: float,
     bin_smoothing: bool,
@@ -363,6 +444,15 @@ def _process_single_band(
     harmonic_lock_hz: float = 0.0,
     n_fft: int = 2048,
     output_trim_db: float = 0.0,
+    sub_enabled: bool = DEFAULT_SUB_ENABLED,
+    sub_source: SubSourceName = DEFAULT_SUB_SOURCE,
+    sub_note: str = DEFAULT_SUB_NOTE,
+    sub_scale_degree: int = DEFAULT_SUB_SCALE_DEGREE,
+    sub_octave: int = DEFAULT_SUB_OCTAVE,
+    sub_level: float = DEFAULT_SUB_LEVEL,
+    sub_cut_hz: float = DEFAULT_SUB_CUT_HZ,
+    air_cut_hz: float = DEFAULT_AIR_CUT_HZ,
+    air_mix: float = DEFAULT_AIR_MIX,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """
     Process a single audio band through the full pipeline.
@@ -443,6 +533,72 @@ def _process_single_band(
         }
         
         return x_out, taps
+
+    if quantize_mode == "autotune_v1":
+        if pre_quant and snap_strength > 0.0:
+            proc_start = time.perf_counter()
+            try:
+                autotune_result = apply_autotune_v1(
+                    x_in,
+                    sr=sr,
+                    cfg=AutotuneV1Config(
+                        key=key,
+                        scale=scale,  # type: ignore[arg-type]
+                        strength=float(np.clip(snap_strength, 0.0, 1.0)),
+                        sub_enabled=sub_enabled,
+                        sub_source=sub_source,
+                        sub_note=sub_note,
+                        sub_scale_degree=sub_scale_degree,
+                        sub_octave=sub_octave,
+                        sub_level=sub_level,
+                        sub_cut_hz=sub_cut_hz,
+                        air_cut_hz=air_cut_hz,
+                        air_mix=air_mix,
+                    ),
+                )
+                if timing is not None:
+                    timing.proc += time.perf_counter() - proc_start
+            except Exception:
+                if timing is not None:
+                    timing.proc += time.perf_counter() - proc_start
+                raise
+            x_pre = autotune_result.output.astype(np.float32)
+        else:
+            x_pre = x_in.copy()
+
+        tap_pre_quant = x_pre.copy()
+
+        mode = distortion_mode or "wavefold"
+        fold_amount = float(distortion_params.get("fold_amount", 1.0))
+        bias = float(distortion_params.get("bias", 0.0))
+        drive = float(distortion_params.get("drive", 1.0))
+        warmth = float(distortion_params.get("warmth", 0.5))
+
+        x_post_dist = apply_distortion(
+            x_pre,
+            mode=mode,  # type: ignore[arg-type]
+            fold_amount=fold_amount,
+            bias=bias,
+            drive=drive,
+            warmth=warmth,
+        )
+        tap_post_dist = x_post_dist.copy()
+
+        # V1 autotune path intentionally avoids spectral post-quantization.
+        x_post_quant = x_post_dist.copy()
+
+        return _finalize_single_band_output(
+            x_post_quant=x_post_quant,
+            sr=sr,
+            limiter_on=limiter_on,
+            limiter_ceiling_db=limiter_ceiling_db,
+            dry_wet=dry_wet,
+            tap_input=tap_input,
+            output_trim_db=output_trim_db,
+            n_samples=n_samples,
+            tap_pre_quant=tap_pre_quant,
+            tap_post_dist=tap_post_dist,
+        )
     
     # =====================================================================
     # NORMAL PROCESSING MODE: Full pipeline with quantization, distortion, etc.
@@ -493,6 +649,8 @@ def _process_single_band(
             spectral_freeze=spectral_freeze,
             formant_shift=formant_shift,
             harmonic_lock_hz=harmonic_lock_hz,
+            quantize_min_hz=sub_cut_hz,
+            quantize_max_hz=air_cut_hz,
         )
         # Convert to time-domain for tap and distortion
         # NOTE: If post-quant is also enabled, we defer the final iSTFT
@@ -612,6 +770,8 @@ def _process_single_band(
                 spectral_freeze=spectral_freeze,
                 formant_shift=formant_shift,
                 harmonic_lock_hz=harmonic_lock_hz,
+                quantize_min_hz=sub_cut_hz,
+                quantize_max_hz=air_cut_hz,
             )
             
             # =================================================================
@@ -658,6 +818,8 @@ def _process_single_band(
                 spectral_freeze=spectral_freeze,
                 formant_shift=formant_shift,
                 harmonic_lock_hz=harmonic_lock_hz,
+                quantize_min_hz=sub_cut_hz,
+                quantize_max_hz=air_cut_hz,
             )
 
             # =================================================================
@@ -762,6 +924,7 @@ def _parse_ui_config(
     config: Dict[str, Any],
     key: str,
     scale: str,
+    quantize_mode: QuantizeMode,
     crossover_hz: float,
     lowband_drive: float,
     mono_strength: float,
@@ -772,21 +935,45 @@ def _parse_ui_config(
     harmonic_lock_hz: float,
     delta_listen: bool,
     output_trim_db: float,
+    sub_enabled: bool,
+    sub_source: SubSourceName,
+    sub_note: str,
+    sub_scale_degree: int,
+    sub_octave: int,
+    sub_level: float,
+    sub_cut_hz: float,
+    air_cut_hz: float,
+    air_mix: float,
 ) -> Dict[str, Any]:
     """Parse V2 UI centralized config dict and return overridden parameter values."""
     result: Dict[str, Any] = {
-        "key": key, "scale": scale, "crossover_hz": crossover_hz,
+        "key": key, "scale": scale, "quantize_mode": quantize_mode,
+        "crossover_hz": crossover_hz,
         "lowband_drive": lowband_drive, "mono_strength": mono_strength,
         "spectral_fx_mode": spectral_fx_mode, "spectral_fx_strength": spectral_fx_strength,
         "spectral_freeze": spectral_freeze, "formant_shift": formant_shift,
         "harmonic_lock_hz": harmonic_lock_hz, "delta_listen": delta_listen,
         "output_trim_db": output_trim_db, "low_trim": 0.0, "use_multiband": True,
+        "sub_enabled": sub_enabled, "sub_source": sub_source, "sub_note": sub_note,
+        "sub_scale_degree": sub_scale_degree, "sub_octave": sub_octave,
+        "sub_level": sub_level, "sub_cut_hz": sub_cut_hz,
+        "air_cut_hz": air_cut_hz, "air_mix": air_mix,
     }
 
     if "quantization" in config:
         quant_cfg = config["quantization"]
         result["key"] = str(quant_cfg.get("key", key))
         result["scale"] = str(quant_cfg.get("scale", scale))
+        result["quantize_mode"] = str(quant_cfg.get("mode", quantize_mode))
+        result["sub_enabled"] = bool(quant_cfg.get("sub_enabled", sub_enabled))
+        result["sub_source"] = str(quant_cfg.get("sub_source", sub_source))
+        result["sub_note"] = str(quant_cfg.get("sub_note", sub_note))
+        result["sub_scale_degree"] = int(quant_cfg.get("sub_scale_degree", sub_scale_degree))
+        result["sub_octave"] = int(quant_cfg.get("sub_octave", sub_octave))
+        result["sub_level"] = float(quant_cfg.get("sub_level", sub_level))
+        result["sub_cut_hz"] = float(quant_cfg.get("sub_cut_hz", sub_cut_hz))
+        result["air_cut_hz"] = float(quant_cfg.get("air_cut_hz", air_cut_hz))
+        result["air_mix"] = float(quant_cfg.get("air_mix", air_mix))
     if "crossover_freq" in config:
         result["crossover_hz"] = float(config["crossover_freq"])
     if "low_band" in config:
@@ -826,6 +1013,7 @@ def _process_multiband(
     sr: int,
     key: str,
     scale: str,
+    quantize_mode: QuantizeMode,
     snap_strength: float,
     smear: float,
     bin_smoothing: bool,
@@ -850,6 +1038,15 @@ def _process_multiband(
     harmonic_lock_hz: float,
     output_trim_db: float,
     tap_input: np.ndarray,
+    sub_enabled: bool,
+    sub_source: SubSourceName,
+    sub_note: str,
+    sub_scale_degree: int,
+    sub_octave: int,
+    sub_level: float,
+    sub_cut_hz: float,
+    air_cut_hz: float,
+    air_mix: float,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     """Multiband processing: split into low/high, process separately, recombine."""
     n_samples = x_in.shape[0]
@@ -877,7 +1074,7 @@ def _process_multiband(
 
     # High band: full STFT pipeline
     processed_high, taps_high = _process_single_band(
-        high_aligned, sr=sr, key=key, scale=scale,
+        high_aligned, sr=sr, key=key, scale=scale, quantize_mode=quantize_mode,
         snap_strength=snap_strength, smear=smear, bin_smoothing=bin_smoothing,
         pre_quant=pre_quant, post_quant=post_quant,
         distortion_mode=distortion_mode, distortion_params=distortion_params,
@@ -889,6 +1086,10 @@ def _process_multiband(
         spectral_fx_params=spectral_fx_params,
         spectral_freeze=spectral_freeze, formant_shift=formant_shift,
         harmonic_lock_hz=harmonic_lock_hz, output_trim_db=output_trim_db,
+        sub_enabled=sub_enabled, sub_source=sub_source, sub_note=sub_note,
+        sub_scale_degree=sub_scale_degree, sub_octave=sub_octave,
+        sub_level=sub_level, sub_cut_hz=sub_cut_hz, air_cut_hz=air_cut_hz,
+        air_mix=air_mix,
     )
 
     # Recombine
@@ -914,6 +1115,7 @@ def process_audio(
     sr: int = DEFAULT_SAMPLE_RATE,
     key: str = DEFAULT_KEY,
     scale: str = DEFAULT_SCALE,
+    quantize_mode: QuantizeMode = DEFAULT_QUANTIZE_MODE,
     snap_strength: float = DEFAULT_SNAP_STRENGTH,
     smear: float = DEFAULT_SMEAR,
     bin_smoothing: bool = DEFAULT_BIN_SMOOTHING,
@@ -939,6 +1141,15 @@ def process_audio(
     delta_listen: bool = False,
     mono_strength: float = 1.0,
     output_trim_db: float = 0.0,
+    sub_enabled: bool = DEFAULT_SUB_ENABLED,
+    sub_source: SubSourceName = DEFAULT_SUB_SOURCE,
+    sub_note: str = DEFAULT_SUB_NOTE,
+    sub_scale_degree: int = DEFAULT_SUB_SCALE_DEGREE,
+    sub_octave: int = DEFAULT_SUB_OCTAVE,
+    sub_level: float = DEFAULT_SUB_LEVEL,
+    sub_cut_hz: float = DEFAULT_SUB_CUT_HZ,
+    air_cut_hz: float = DEFAULT_AIR_CUT_HZ,
+    air_mix: float = DEFAULT_AIR_MIX,
     *,
     pipeline_config: Union[PipelineConfig, None] = None,
 ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
@@ -991,11 +1202,21 @@ def process_audio(
         pc = pipeline_config
         key = pc.key
         scale = pc.scale
+        quantize_mode = pc.quantize_mode
         snap_strength = pc.snap_strength
         smear = pc.smear
         bin_smoothing = pc.bin_smoothing
         pre_quant = pc.pre_quant
         post_quant = pc.post_quant
+        sub_enabled = pc.sub_enabled
+        sub_source = pc.sub_source
+        sub_note = pc.sub_note
+        sub_scale_degree = pc.sub_scale_degree
+        sub_octave = pc.sub_octave
+        sub_level = pc.sub_level
+        sub_cut_hz = pc.sub_cut_hz
+        air_cut_hz = pc.air_cut_hz
+        air_mix = pc.air_mix
         distortion_mode = pc.distortion_mode
         distortion_params = pc.distortion_params
         limiter_on = pc.limiter_on
@@ -1042,15 +1263,20 @@ def process_audio(
         # Parse V2 UI config dict if provided
         if config is not None:
             parsed = _parse_ui_config(
-                config, key=key, scale=scale, crossover_hz=crossover_hz,
+                config, key=key, scale=scale, quantize_mode=quantize_mode, crossover_hz=crossover_hz,
                 lowband_drive=lowband_drive, mono_strength=mono_strength,
                 spectral_fx_mode=spectral_fx_mode, spectral_fx_strength=spectral_fx_strength,
                 spectral_freeze=spectral_freeze, formant_shift=formant_shift,
                 harmonic_lock_hz=harmonic_lock_hz, delta_listen=delta_listen,
                 output_trim_db=output_trim_db,
+                sub_enabled=sub_enabled, sub_source=sub_source, sub_note=sub_note,
+                sub_scale_degree=sub_scale_degree, sub_octave=sub_octave,
+                sub_level=sub_level, sub_cut_hz=sub_cut_hz, air_cut_hz=air_cut_hz,
+                air_mix=air_mix,
             )
             key = parsed["key"]
             scale = parsed["scale"]
+            quantize_mode = parsed["quantize_mode"]
             crossover_hz = parsed["crossover_hz"]
             lowband_drive = parsed["lowband_drive"]
             mono_strength = parsed["mono_strength"]
@@ -1063,6 +1289,15 @@ def process_audio(
             output_trim_db = parsed["output_trim_db"]
             low_trim = parsed["low_trim"]
             use_multiband = parsed["use_multiband"]
+            sub_enabled = parsed["sub_enabled"]
+            sub_source = parsed["sub_source"]
+            sub_note = parsed["sub_note"]
+            sub_scale_degree = parsed["sub_scale_degree"]
+            sub_octave = parsed["sub_octave"]
+            sub_level = parsed["sub_level"]
+            sub_cut_hz = parsed["sub_cut_hz"]
+            air_cut_hz = parsed["air_cut_hz"]
+            air_mix = parsed["air_mix"]
 
         # Preview mode: truncate audio
         if preview_enabled:
@@ -1077,9 +1312,23 @@ def process_audio(
         x_in = ensure_mono_float32(audio)
         tap_input = x_in.copy()
 
+        if (
+            quantize_mode == "autotune_v1"
+            and (
+                spectral_fx_mode is not None
+                or spectral_freeze
+                or formant_shift != 0.0
+                or harmonic_lock_hz > 0.0
+            )
+        ):
+            quantize_mode = "spectral_bins"
+
+        if quantize_mode == "autotune_v1" and snap_strength > 0.0:
+            use_multiband = False
+
         if use_multiband:
             x_out, taps = _process_multiband(
-                x_in, sr=sr, key=key, scale=scale,
+                x_in, sr=sr, key=key, scale=scale, quantize_mode=quantize_mode,
                 snap_strength=snap_strength, smear=smear, bin_smoothing=bin_smoothing,
                 pre_quant=pre_quant, post_quant=post_quant,
                 distortion_mode=distortion_mode, distortion_params=distortion_params,
@@ -1092,10 +1341,14 @@ def process_audio(
                 spectral_freeze=spectral_freeze, formant_shift=formant_shift,
                 harmonic_lock_hz=harmonic_lock_hz, output_trim_db=output_trim_db,
                 tap_input=tap_input,
+                sub_enabled=sub_enabled, sub_source=sub_source, sub_note=sub_note,
+                sub_scale_degree=sub_scale_degree, sub_octave=sub_octave,
+                sub_level=sub_level, sub_cut_hz=sub_cut_hz,
+                air_cut_hz=air_cut_hz, air_mix=air_mix,
             )
         else:
             x_out, taps_band = _process_single_band(
-                x_in, sr=sr, key=key, scale=scale,
+                x_in, sr=sr, key=key, scale=scale, quantize_mode=quantize_mode,
                 snap_strength=snap_strength, smear=smear, bin_smoothing=bin_smoothing,
                 pre_quant=pre_quant, post_quant=post_quant,
                 distortion_mode=distortion_mode, distortion_params=distortion_params,
@@ -1107,6 +1360,10 @@ def process_audio(
                 spectral_fx_params=spectral_fx_params,
                 spectral_freeze=spectral_freeze, formant_shift=formant_shift,
                 harmonic_lock_hz=harmonic_lock_hz, output_trim_db=output_trim_db,
+                sub_enabled=sub_enabled, sub_source=sub_source, sub_note=sub_note,
+                sub_scale_degree=sub_scale_degree, sub_octave=sub_octave,
+                sub_level=sub_level, sub_cut_hz=sub_cut_hz,
+                air_cut_hz=air_cut_hz, air_mix=air_mix,
             )
             taps = {"input": tap_input, **taps_band}
 

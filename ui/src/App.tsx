@@ -233,6 +233,20 @@ export default function App() {
         );
 
       case 'quantize':
+        {
+        const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const scaleDegreeCounts: Record<string, number> = {
+          major: 7,
+          minor: 7,
+          pentatonic: 5,
+          dorian: 7,
+          mixolydian: 7,
+          harmonic_minor: 7,
+        };
+        const subSources = ['root', 'manual', 'scale_degree'] as const;
+        const subSourceIndex = subSources.indexOf(params.quantizeSubSource);
+        const scaleDegreeMax = Math.max(0, (scaleDegreeCounts[params.quantizeScale] ?? 7) - 1);
+        const subDegreeDisplay = `Deg ${Math.round(params.quantizeSubDegree) + 1}`;
         return (
           <EffectModule
             key={slot.id}
@@ -241,7 +255,7 @@ export default function App() {
             enabled={params.quantizeEnabled}
             onToggle={() => updateParams({ quantizeEnabled: !params.quantizeEnabled })}
             onRemove={() => removeFxSlot(slot.id)}
-            subtitle={`${['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][params.quantizeKey]} ${params.quantizeScale}`}
+            subtitle={params.quantizeScale}
             subtitleOptions={['major', 'minor', 'pentatonic', 'dorian', 'mixolydian', 'harmonic_minor']}
             onSubtitleChange={(v) => updateParams({ quantizeScale: v })}
           >
@@ -253,16 +267,71 @@ export default function App() {
               displayValue={`${Math.round(params.quantizeStrength * 100)}%`}
             />
             <Knob
+              label="Sub"
+              value={params.quantizeSubEnabled ? 1 : 0}
+              onChange={(v) => updateParams({ quantizeSubEnabled: Math.round(v) >= 1 })}
+              color={meta.color}
+              min={0}
+              max={1}
+              displayValue={params.quantizeSubEnabled ? 'On' : 'Off'}
+            />
+            <Knob
               label="Key"
               value={params.quantizeKey}
               onChange={(v) => updateParams({ quantizeKey: Math.round(v) })}
               color={meta.color}
               min={0}
               max={11}
-              displayValue={['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][Math.round(params.quantizeKey)]}
+              displayValue={noteNames[Math.round(params.quantizeKey)]}
+            />
+            <Knob
+              label="Sub Src"
+              value={subSourceIndex < 0 ? 0 : subSourceIndex}
+              onChange={(v) => updateParams({ quantizeSubSource: subSources[Math.max(0, Math.min(subSources.length - 1, Math.round(v)))] })}
+              color={meta.color}
+              min={0}
+              max={2}
+              displayValue={params.quantizeSubSource === 'scale_degree' ? 'Degree' : params.quantizeSubSource}
+            />
+            <Knob
+              label={params.quantizeSubSource === 'scale_degree' ? 'Degree' : 'Sub Note'}
+              value={params.quantizeSubSource === 'scale_degree' ? params.quantizeSubDegree : params.quantizeSubNote}
+              onChange={(v) => (
+                params.quantizeSubSource === 'scale_degree'
+                  ? updateParams({ quantizeSubDegree: Math.round(v) })
+                  : updateParams({ quantizeSubNote: Math.round(v) })
+              )}
+              color={meta.color}
+              min={0}
+              max={params.quantizeSubSource === 'scale_degree' ? scaleDegreeMax : 11}
+              displayValue={params.quantizeSubSource === 'scale_degree' ? subDegreeDisplay : noteNames[Math.round(params.quantizeSubNote)]}
+            />
+            <Knob
+              label="Sub Oct"
+              value={params.quantizeSubOctave}
+              onChange={(v) => updateParams({ quantizeSubOctave: Math.round(v) })}
+              color={meta.color}
+              min={0}
+              max={4}
+              displayValue={`Oct ${Math.round(params.quantizeSubOctave)}`}
+            />
+            <Knob
+              label="Sub Lvl"
+              value={params.quantizeSubLevel}
+              onChange={(v) => updateParams({ quantizeSubLevel: v })}
+              color={meta.color}
+              displayValue={`${Math.round(params.quantizeSubLevel * 100)}%`}
+            />
+            <Knob
+              label="Air"
+              value={params.quantizeAirMix}
+              onChange={(v) => updateParams({ quantizeAirMix: v })}
+              color={meta.color}
+              displayValue={`${Math.round(params.quantizeAirMix * 100)}%`}
             />
           </EffectModule>
         );
+        }
 
       case 'delay':
         return (

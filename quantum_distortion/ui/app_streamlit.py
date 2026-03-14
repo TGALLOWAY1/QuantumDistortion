@@ -31,7 +31,20 @@ from typing import Any, Dict
 
 import numpy as np
 import soundfile as sf
-import streamlit as st
+
+try:
+    import streamlit as st
+except ModuleNotFoundError:  # pragma: no cover - optional UI dependency
+    class _MissingStreamlit:
+        session_state: Dict[str, Any] = {}
+
+        def __getattr__(self, name: str) -> Any:
+            raise ModuleNotFoundError(
+                "streamlit is required to run the Streamlit UI. "
+                "Install it with `pip install streamlit`."
+            )
+
+    st = _MissingStreamlit()
 
 
 from quantum_distortion.dsp.pipeline import process_audio
@@ -44,6 +57,16 @@ from quantum_distortion.ui.visualizers import (
 
 KEY_OPTIONS = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 SCALE_OPTIONS = ["major", "minor", "pentatonic", "dorian", "mixolydian", "harmonic_minor"]
+QUANTIZE_MODE_OPTIONS = ["autotune_v1", "spectral_bins"]
+SUB_SOURCE_OPTIONS = ["root", "manual", "scale_degree"]
+SCALE_DEGREE_COUNTS = {
+    "major": 7,
+    "minor": 7,
+    "pentatonic": 5,
+    "dorian": 7,
+    "mixolydian": 7,
+    "harmonic_minor": 7,
+}
 TAP_OPTIONS = ["input", "pre_quant", "post_dist", "output"]
 VISUAL_OPTIONS = ["Spectrum", "Oscilloscope", "Phase Scope"]
 
@@ -75,6 +98,16 @@ def build_processing_config_from_session() -> Dict[str, Any]:
     config["quantization"] = {
         "key": quant_settings.get("key", "D"),
         "scale": quant_settings.get("scale", "minor"),
+        "mode": quant_settings.get("mode", "autotune_v1"),
+        "sub_enabled": quant_settings.get("sub_enabled", True),
+        "sub_source": quant_settings.get("sub_source", "root"),
+        "sub_note": quant_settings.get("sub_note", "C"),
+        "sub_scale_degree": quant_settings.get("sub_scale_degree", 0),
+        "sub_octave": quant_settings.get("sub_octave", 2),
+        "sub_level": quant_settings.get("sub_level", 0.35),
+        "sub_cut_hz": quant_settings.get("sub_cut_hz", 110.0),
+        "air_cut_hz": quant_settings.get("air_cut_hz", 5000.0),
+        "air_mix": quant_settings.get("air_mix", 1.0),
     }
     
     # Crossover frequency (shared between low and high band)
@@ -531,6 +564,16 @@ def render_v2_ui() -> None:
             st.session_state["quantization_settings"] = {
                 "key": "D",
                 "scale": "minor",
+                "mode": "autotune_v1",
+                "sub_enabled": True,
+                "sub_source": "root",
+                "sub_note": "C",
+                "sub_scale_degree": 0,
+                "sub_octave": 2,
+                "sub_level": 0.35,
+                "sub_cut_hz": 110.0,
+                "air_cut_hz": 5000.0,
+                "air_mix": 1.0,
             }
         
         # Get current settings
@@ -539,7 +582,7 @@ def render_v2_ui() -> None:
         
         # Quantization Settings (Key & Scale) - at the top
         st.markdown("**Quantization Settings**")
-        col_key, col_scale = st.columns(2, gap="medium")
+        col_key, col_scale, col_mode = st.columns(3, gap="medium")
         with col_key:
             key = st.selectbox(
                 "Key",
@@ -556,6 +599,105 @@ def render_v2_ui() -> None:
                 key="v2_quantization_scale",
             )
             quant_settings["scale"] = scale
+        with col_mode:
+            mode = st.selectbox(
+                "Mode",
+                QUANTIZE_MODE_OPTIONS,
+                index=QUANTIZE_MODE_OPTIONS.index(quant_settings.get("mode", "autotune_v1")) if quant_settings.get("mode", "autotune_v1") in QUANTIZE_MODE_OPTIONS else 0,
+                key="v2_quantization_mode",
+            )
+            quant_settings["mode"] = mode
+
+        col_sub_enable, col_sub_source = st.columns(2, gap="medium")
+        with col_sub_enable:
+            sub_enabled = st.checkbox(
+                "Generate Musical Sub",
+                value=quant_settings.get("sub_enabled", True),
+                key="v2_quantization_sub_enabled",
+            )
+            quant_settings["sub_enabled"] = sub_enabled
+        with col_sub_source:
+            sub_source = st.selectbox(
+                "Sub Source",
+                SUB_SOURCE_OPTIONS,
+                index=SUB_SOURCE_OPTIONS.index(quant_settings.get("sub_source", "root")) if quant_settings.get("sub_source", "root") in SUB_SOURCE_OPTIONS else 0,
+                key="v2_quantization_sub_source",
+            )
+            quant_settings["sub_source"] = sub_source
+
+        col_sub_note, col_sub_octave, col_sub_level = st.columns(3, gap="medium")
+        with col_sub_note:
+            if quant_settings["sub_source"] == "scale_degree":
+                scale_degree_max = max(0, SCALE_DEGREE_COUNTS.get(str(quant_settings.get("scale", "major")), 7) - 1)
+                sub_scale_degree = st.slider(
+                    "Sub Degree",
+                    min_value=0,
+                    max_value=scale_degree_max,
+                    value=min(int(quant_settings.get("sub_scale_degree", 0)), scale_degree_max),
+                    step=1,
+                    key="v2_quantization_sub_degree",
+                )
+                quant_settings["sub_scale_degree"] = sub_scale_degree
+            else:
+                sub_note = st.selectbox(
+                    "Sub Note",
+                    KEY_OPTIONS,
+                    index=KEY_OPTIONS.index(quant_settings.get("sub_note", "C")) if quant_settings.get("sub_note", "C") in KEY_OPTIONS else 0,
+                    key="v2_quantization_sub_note",
+                )
+                quant_settings["sub_note"] = sub_note
+        with col_sub_octave:
+            sub_octave = st.slider(
+                "Sub Octave",
+                min_value=0,
+                max_value=4,
+                value=int(quant_settings.get("sub_octave", 2)),
+                step=1,
+                key="v2_quantization_sub_octave",
+            )
+            quant_settings["sub_octave"] = sub_octave
+        with col_sub_level:
+            sub_level = st.slider(
+                "Sub Level",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(quant_settings.get("sub_level", 0.35)),
+                step=0.05,
+                key="v2_quantization_sub_level",
+            )
+            quant_settings["sub_level"] = sub_level
+
+        col_sub_cut, col_air_cut, col_air_mix = st.columns(3, gap="medium")
+        with col_sub_cut:
+            sub_cut_hz = st.slider(
+                "Sub Cut (Hz)",
+                min_value=90.0,
+                max_value=120.0,
+                value=float(quant_settings.get("sub_cut_hz", 110.0)),
+                step=5.0,
+                key="v2_quantization_sub_cut",
+            )
+            quant_settings["sub_cut_hz"] = sub_cut_hz
+        with col_air_cut:
+            air_cut_hz = st.slider(
+                "Air Cut (Hz)",
+                min_value=3500.0,
+                max_value=7000.0,
+                value=float(quant_settings.get("air_cut_hz", 5000.0)),
+                step=250.0,
+                key="v2_quantization_air_cut",
+            )
+            quant_settings["air_cut_hz"] = air_cut_hz
+        with col_air_mix:
+            air_mix = st.slider(
+                "Air Preserve",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(quant_settings.get("air_mix", 1.0)),
+                step=0.05,
+                key="v2_quantization_air_mix",
+            )
+            quant_settings["air_mix"] = air_mix
         st.session_state["quantization_settings"] = quant_settings
         
         st.markdown("---")
@@ -797,4 +939,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
