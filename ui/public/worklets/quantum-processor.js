@@ -93,6 +93,9 @@ class QuantumProcessor extends AudioWorkletProcessor {
         { freq: 4000, gain: 0, q: 1.0, type: 'peak' },
         { freq: 12000, gain: 0, q: 1.0, type: 'highshelf' },
       ],
+
+      // Key-aware parametric EQ instances
+      peqInstances: [],
     };
 
     // Per-channel state for stereo processing
@@ -159,6 +162,27 @@ class QuantumProcessor extends AudioWorkletProcessor {
     this.pitchDetectInterval = 512; // detect pitch every ~10ms at 48kHz
     this.detectedPitch = 0;
 
+    // --- Parametric EQ (key-aware) state ---
+    // peqInstances param is an array of { id, enabled, mode, key, scale, amount, q }
+    // For each instance we precompute biquad filters targeting in-key or out-of-key notes
+    this.peqMaxInstances = 8;
+    this.peqMaxFilters = 60; // 12 pitch classes × 5 octaves
+    this.peqOctaveStart = 2;
+    this.peqOctaveEnd = 6;
+    // Coefficients: [instance][filter] = { b0, b1, b2, a1, a2 }
+    this.peqCoeffs = Array.from({ length: this.peqMaxInstances }, () =>
+      Array.from({ length: this.peqMaxFilters }, () => ({ b0: 1, b1: 0, b2: 0, a1: 0, a2: 0 }))
+    );
+    // Filter count per instance (how many filters are active)
+    this.peqFilterCounts = new Array(this.peqMaxInstances).fill(0);
+    // Per-channel filter states: [channel][instance][filter] = { x1, x2, y1, y2 }
+    this.peqStates = Array.from({ length: MAX_CHANNELS }, () =>
+      Array.from({ length: this.peqMaxInstances }, () =>
+        Array.from({ length: this.peqMaxFilters }, () => ({ x1: 0, x2: 0, y1: 0, y2: 0 }))
+      )
+    );
+    this.peqDirty = true;
+
     // FFT for spectrum analysis (sent to UI)
     this.analysisSamples = new Float32Array(2048);
     this.analysisWritePos = 0;
@@ -168,6 +192,7 @@ class QuantumProcessor extends AudioWorkletProcessor {
       if (e.data.type === 'params') {
         Object.assign(this.params, e.data.params);
         this.eqDirty = true;
+        this.peqDirty = true;
       }
     };
   }
@@ -264,6 +289,77 @@ class QuantumProcessor extends AudioWorkletProcessor {
       };
     }
     this.eqDirty = false;
+  }
+
+  // Compute biquad coefficients for all active PEQ (key-aware) instances
+  computePeqCoeffs() {
+    const sr = sampleRate;
+    const instances = this.params.peqInstances || [];
+
+    for (let inst = 0; inst < this.peqMaxInstances; inst++) {
+      if (inst >= instances.length || !instances[inst].enabled) {
+        this.peqFilterCounts[inst] = 0;
+        continue;
+      }
+
+      const cfg = instances[inst];
+      const scale = SCALES[cfg.scale] || SCALES.major;
+      const key = cfg.key || 0;
+      const amount = cfg.amount || 0;
+      const Q = Math.max(cfg.q || 2.0, 0.1);
+      const isBoost = cfg.mode === 'boost';
+
+      // Gain in dB: amount 0-1 maps to 0-18 dB
+      const gainDB = amount * 18;
+      if (gainDB < 0.1) {
+        this.peqFilterCounts[inst] = 0;
+        continue;
+      }
+
+      // Determine which pitch classes are in the scale
+      const inScale = new Set(scale.map(s => (key + s) % 12));
+
+      let filterIdx = 0;
+      for (let octave = this.peqOctaveStart; octave <= this.peqOctaveEnd; octave++) {
+        for (let pc = 0; pc < 12; pc++) {
+          const isInKey = inScale.has(pc);
+          // Boost mode: filter in-key notes (positive gain)
+          // Cut mode: filter out-of-key notes (negative gain)
+          const shouldFilter = isBoost ? isInKey : !isInKey;
+          if (!shouldFilter) continue;
+          if (filterIdx >= this.peqMaxFilters) break;
+
+          const midi = (octave + 1) * 12 + pc;
+          const freq = 440 * Math.pow(2, (midi - 69) / 12);
+
+          // Skip frequencies outside useful range
+          if (freq < 30 || freq > sr * 0.45) continue;
+
+          // Compute peak biquad coefficients
+          const appliedGain = isBoost ? gainDB : -gainDB;
+          const A = Math.pow(10, appliedGain / 40);
+          const w0 = 2 * Math.PI * freq / sr;
+          const sinW = Math.sin(w0);
+          const cosW = Math.cos(w0);
+          const alpha = sinW / (2 * Q);
+
+          const b0 = 1 + alpha * A;
+          const b1 = -2 * cosW;
+          const b2 = 1 - alpha * A;
+          const a0 = 1 + alpha / A;
+          const a1 = -2 * cosW;
+          const a2 = 1 - alpha / A;
+
+          this.peqCoeffs[inst][filterIdx] = {
+            b0: b0 / a0, b1: b1 / a0, b2: b2 / a0,
+            a1: a1 / a0, a2: a2 / a0,
+          };
+          filterIdx++;
+        }
+      }
+      this.peqFilterCounts[inst] = filterIdx;
+    }
+    this.peqDirty = false;
   }
 
   // Apply a single biquad filter sample
@@ -590,6 +686,9 @@ class QuantumProcessor extends AudioWorkletProcessor {
     if (this.eqDirty) {
       this.computeEQCoeffs();
     }
+    if (this.peqDirty) {
+      this.computePeqCoeffs();
+    }
 
     for (let i = 0; i < len; i++) {
       let monoSubSample = 0;
@@ -609,6 +708,19 @@ class QuantumProcessor extends AudioWorkletProcessor {
             const bandType = this.params.eqBands[b].type || 'peak';
             if (bandType === 'lowpass' || bandType === 'highpass' || this.params.eqBands[b].gain !== 0) {
               sample = this.biquad(sample, this.eqCoeffs[b], eqChStates[b]);
+            }
+          }
+        }
+
+        // --- Parametric EQ (key-aware) ---
+        const peqInstances = this.params.peqInstances || [];
+        for (let inst = 0; inst < peqInstances.length && inst < this.peqMaxInstances; inst++) {
+          const filterCount = this.peqFilterCounts[inst];
+          if (filterCount > 0) {
+            const instStates = this.peqStates[ch][inst];
+            const instCoeffs = this.peqCoeffs[inst];
+            for (let f = 0; f < filterCount; f++) {
+              sample = this.biquad(sample, instCoeffs[f], instStates[f]);
             }
           }
         }
