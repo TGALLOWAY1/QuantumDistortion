@@ -40,6 +40,24 @@ function OutputModule({ params, updateParams }: {
       </div>
       <div className="flex items-end justify-center gap-4 px-3 py-3 mt-auto">
         <Knob
+          label="Low"
+          value={params.lowGain}
+          onChange={(v) => updateParams({ lowGain: v })}
+          color="#c45e3e"
+          min={0}
+          max={2}
+          displayValue={`${(params.lowGain * 100).toFixed(0)}%`}
+        />
+        <Knob
+          label="High"
+          value={params.highGain}
+          onChange={(v) => updateParams({ highGain: v })}
+          color="#8ab4c4"
+          min={0}
+          max={2}
+          displayValue={`${(params.highGain * 100).toFixed(0)}%`}
+        />
+        <Knob
           label="Dry/Wet"
           value={params.dryWet}
           onChange={(v) => updateParams({ dryWet: v })}
@@ -81,6 +99,7 @@ export default function App() {
   const [specWidth, setSpecWidth] = useState(1100);
   const specHeight = 320;
   const [selectedBand, setSelectedBand] = useState<number | null>(null);
+  const [showDevPanel, setShowDevPanel] = useState(false);
 
   // --- Dynamic FX slots (default: Saturate → Quantize → Saturate 2) ---
   const [fxSlots, setFxSlots] = useState<FxSlot[]>([
@@ -102,12 +121,20 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if user is typing in an input
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      // Dev panel toggle works without a file loaded
+      if (e.code === 'KeyD' && e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setShowDevPanel(prev => !prev);
+        return;
+      }
+
       if (!fileName) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
         togglePlay();
-      } else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey) {
+      } else if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
         e.preventDefault();
         restart();
       }
@@ -235,18 +262,23 @@ export default function App() {
       case 'quantize':
         {
         const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-        const scaleDegreeCounts: Record<string, number> = {
-          major: 7,
-          minor: 7,
-          pentatonic: 5,
-          dorian: 7,
-          mixolydian: 7,
-          harmonic_minor: 7,
+        const scaleIntervals: Record<string, number[]> = {
+          major: [0, 2, 4, 5, 7, 9, 11],
+          minor: [0, 2, 3, 5, 7, 8, 10],
+          pentatonic: [0, 2, 4, 7, 9],
+          dorian: [0, 2, 3, 5, 7, 9, 10],
+          mixolydian: [0, 2, 4, 5, 7, 9, 10],
+          harmonic_minor: [0, 2, 3, 5, 7, 8, 11],
         };
+        const currentScale = scaleIntervals[params.quantizeScale] ?? scaleIntervals.major;
+        const scaleNoteCount = currentScale.length;
         const subSources = ['root', 'manual', 'scale_degree'] as const;
         const subSourceIndex = subSources.indexOf(params.quantizeSubSource);
-        const scaleDegreeMax = Math.max(0, (scaleDegreeCounts[params.quantizeScale] ?? 7) - 1);
+        const scaleDegreeMax = Math.max(0, scaleNoteCount - 1);
         const subDegreeDisplay = `Deg ${Math.round(params.quantizeSubDegree) + 1}`;
+        // For manual mode: show the actual note name from the scale
+        const manualNoteIndex = Math.max(0, Math.min(scaleDegreeMax, Math.round(params.quantizeSubNote)));
+        const manualNoteName = noteNames[(params.quantizeKey + currentScale[manualNoteIndex]) % 12];
         return (
           <EffectModule
             key={slot.id}
@@ -303,8 +335,8 @@ export default function App() {
               )}
               color={meta.color}
               min={0}
-              max={params.quantizeSubSource === 'scale_degree' ? scaleDegreeMax : 11}
-              displayValue={params.quantizeSubSource === 'scale_degree' ? subDegreeDisplay : noteNames[Math.round(params.quantizeSubNote)]}
+              max={scaleDegreeMax}
+              displayValue={params.quantizeSubSource === 'scale_degree' ? subDegreeDisplay : manualNoteName}
             />
             <Knob
               label="Sub Oct"
@@ -456,6 +488,30 @@ export default function App() {
         eqBands={params.eqBands}
         onShapeChange={handleShapeChange}
       />
+
+      {/* Dev Panel (Shift+D to toggle) */}
+      {showDevPanel && (
+        <div
+          className="flex items-center gap-4 px-4 py-2 mx-2 rounded-lg"
+          style={{
+            background: '#1a1a2e',
+            border: '1px solid #ff6b3540',
+          }}
+        >
+          <span className="text-xs font-mono text-yellow-400 uppercase tracking-wider">Dev</span>
+          <Knob
+            label="Drive Range"
+            value={params._devDriveRange}
+            onChange={(v) => updateParams({ _devDriveRange: v })}
+            color="#ff6b35"
+            displayValue={`${(params._devDriveRange * 100).toFixed(0)}%`}
+          />
+          <span className="text-xs text-gray-500 font-mono">
+            Tape max: {(1 + 20 * params._devDriveRange).toFixed(0)}x |
+            Tube max: {(1 + 25 * params._devDriveRange).toFixed(0)}x
+          </span>
+        </div>
+      )}
 
       {/* Effect Modules Row */}
       <div className="flex gap-2 px-2 py-3 overflow-x-auto items-start">

@@ -62,6 +62,13 @@ class QuantumProcessor extends AudioWorkletProcessor {
       quantizeSubLevel: 0.35,
       quantizeAirMix: 1.0,
 
+      // Low/High end gains (applied post-chain)
+      lowGain: 1.0,
+      highGain: 1.0,
+
+      // Dev-only: drive range scaler (0-1, controls saturation intensity ceiling)
+      _devDriveRange: 0.4,
+
       // Delay
       delayEnabled: false,
       delayTime: 0.25,          // seconds
@@ -138,6 +145,10 @@ class QuantumProcessor extends AudioWorkletProcessor {
     this.quantizeLowState = new Array(MAX_CHANNELS).fill(0.0);
     this.quantizeBodyLpState = new Array(MAX_CHANNELS).fill(0.0);
     this.quantizeDetectorLpState = new Array(MAX_CHANNELS).fill(0.0);
+
+    // Deferred air/sub samples for post-chain mixing
+    this.deferredAir = new Array(MAX_CHANNELS).fill(0.0);
+    this.deferredSubOsc = 0.0;
 
     // YIN pitch detection buffers
     this.yinBufSize = 2048;
@@ -268,7 +279,8 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
   // Tape saturation: soft-clip with harmonics
   tapeSaturate(x, drive) {
-    const d = 1 + drive * 20;
+    const range = this.params._devDriveRange;
+    const d = 1 + drive * 20 * range;
     const driven = x * d;
     const raw = Math.tanh(driven);
     const normalized = raw / Math.tanh(d);
@@ -277,7 +289,8 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
   // Tube saturation: asymmetric soft-clip
   tubeSaturate(x, drive) {
-    const d = 1 + drive * 25;
+    const range = this.params._devDriveRange;
+    const d = 1 + drive * 25 * range;
     const driven = x * d;
     if (driven >= 0) {
       const raw = Math.tanh(driven * 1.2);
@@ -289,7 +302,8 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
   // Wavefold distortion
   wavefold(x, drive) {
-    const d = 1 + drive * 20;
+    const range = this.params._devDriveRange;
+    const d = 1 + drive * 20 * range;
     let s = x * d;
     // Triangle wavefold
     s = Math.asin(Math.sin(s * Math.PI / 2)) * 2 / Math.PI;
@@ -395,7 +409,9 @@ class QuantumProcessor extends AudioWorkletProcessor {
     let pitchClass = this.params.quantizeKey;
 
     if (this.params.quantizeSubSource === 'manual') {
-      pitchClass = this.params.quantizeSubNote;
+      // Manual note is an index into the scale, so sub is always in-key
+      const idx = Math.max(0, Math.min(scale.length - 1, Math.round(this.params.quantizeSubNote)));
+      pitchClass = (this.params.quantizeKey + scale[idx]) % 12;
     } else if (this.params.quantizeSubSource === 'scale_degree') {
       const degree = Math.max(0, Math.min(scale.length - 1, Math.round(this.params.quantizeSubDegree)));
       pitchClass = (this.params.quantizeKey + scale[degree]) % 12;
@@ -629,16 +645,17 @@ class QuantumProcessor extends AudioWorkletProcessor {
             this.quantizeSmoothedRatio += (effectiveTarget - this.quantizeSmoothedRatio) * 0.01;
             this.quantizeSmoothedRatio = Math.max(0.5, Math.min(2.0, this.quantizeSmoothedRatio));
 
+            // Generate sub oscillator sample (deferred — mixed in after sat2)
             if (this.params.quantizeSubEnabled) {
               const subFreq = this.computeSubFrequency();
               const targetGain = Math.min(1.0, this.quantizeDetectorEnv * 4.0) * this.params.quantizeSubLevel;
               this.quantizeSubGain += (targetGain - this.quantizeSubGain) * 0.02;
               this.quantizeSubPhase += (2 * Math.PI * subFreq) / sampleRate;
               if (this.quantizeSubPhase > 2 * Math.PI) this.quantizeSubPhase -= 2 * Math.PI;
-              monoSubSample = Math.sin(this.quantizeSubPhase) * this.quantizeSubGain;
+              this.deferredSubOsc = Math.sin(this.quantizeSubPhase) * this.quantizeSubGain;
             } else {
               this.quantizeSubGain += (0 - this.quantizeSubGain) * 0.05;
-              monoSubSample = 0;
+              this.deferredSubOsc = 0;
             }
           }
 
@@ -646,17 +663,24 @@ class QuantumProcessor extends AudioWorkletProcessor {
           const correctedBody = Math.abs(this.quantizeSmoothedRatio - 1.0) < 0.015
             ? bands.body
             : shiftedBody;
-          const lowOut = this.params.quantizeSubEnabled ? (bands.sub * 0.15) + monoSubSample : bands.sub;
-          sample = lowOut + correctedBody + (bands.air * this.params.quantizeAirMix);
-        } else if (ch === 0) {
-          this.quantizeDetectorEnv *= 0.995;
-          this.quantizeSubGain *= 0.95;
-          this.quantizeTargetRatio += (1.0 - this.quantizeTargetRatio) * 0.05;
-          this.quantizeSmoothedRatio += (1.0 - this.quantizeSmoothedRatio) * 0.05;
-          this.quantizeHeldTargetFreq = 0.0;
-          this.quantizeCandidateTargetFreq = 0.0;
-          this.quantizeCandidateCount = 0;
-          this.quantizeMissingCount = this.quantizeReleaseFrames + 1;
+
+          // Pass through original sub + corrected body only; air and sub osc deferred
+          sample = bands.sub + correctedBody;
+          this.deferredAir[ch] = bands.air;
+        } else {
+          // Quantize disabled — no air to defer
+          this.deferredAir[ch] = 0;
+          this.deferredSubOsc = 0;
+          if (ch === 0) {
+            this.quantizeDetectorEnv *= 0.995;
+            this.quantizeSubGain *= 0.95;
+            this.quantizeTargetRatio += (1.0 - this.quantizeTargetRatio) * 0.05;
+            this.quantizeSmoothedRatio += (1.0 - this.quantizeSmoothedRatio) * 0.05;
+            this.quantizeHeldTargetFreq = 0.0;
+            this.quantizeCandidateTargetFreq = 0.0;
+            this.quantizeCandidateCount = 0;
+            this.quantizeMissingCount = this.quantizeReleaseFrames + 1;
+          }
         }
 
         // --- Delay ---
@@ -706,6 +730,14 @@ class QuantumProcessor extends AudioWorkletProcessor {
             this.params.saturate2Tilt
           );
         }
+
+        // --- Sub oscillator (after distortion, with low-end gain) ---
+        if (this.params.quantizeEnabled && this.params.quantizeSubEnabled) {
+          sample += this.deferredSubOsc * this.params.lowGain;
+        }
+
+        // --- Air (end of chain, with high-end gain) ---
+        sample += this.deferredAir[ch] * this.params.quantizeAirMix * this.params.highGain;
 
         sample = dry * (1 - this.params.dryWet) + sample * this.params.dryWet;
         sample *= this.params.masterGain;
