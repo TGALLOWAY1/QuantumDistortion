@@ -54,6 +54,11 @@ export interface EngineParams {
   quantizeSubLevel: number;
   quantizeAirMix: number;
 
+  lowGain: number;
+  highGain: number;
+
+  _devDriveRange: number;
+
   delayEnabled: boolean;
   delayTime: number;
   delayFeedback: number;
@@ -96,6 +101,11 @@ export const DEFAULT_PARAMS: EngineParams = {
   quantizeSubOctave: 2,
   quantizeSubLevel: 0.35,
   quantizeAirMix: 1.0,
+
+  lowGain: 1.0,
+  highGain: 1.0,
+
+  _devDriveRange: 0.4,
 
   delayEnabled: false,
   delayTime: 0.25,
