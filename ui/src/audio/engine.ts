@@ -11,7 +11,17 @@ export interface EQBand {
   type: FilterType;
 }
 
-export type FxType = 'saturate' | 'quantize' | 'delay' | 'modulate' | 'lofi' | 'saturate2';
+export type FxType = 'saturate' | 'quantize' | 'delay' | 'modulate' | 'lofi' | 'saturate2' | 'peq';
+
+export interface PeqInstance {
+  id: string;
+  enabled: boolean;
+  mode: 'boost' | 'cut';
+  key: number;
+  scale: string;
+  amount: number;
+  q: number;
+}
 
 export interface FxSlot {
   id: string;
@@ -25,6 +35,7 @@ export const FX_CATALOG: Record<FxType, { label: string; color: string }> = {
   modulate:  { label: 'Modulate',   color: '#8a5ec4' },
   lofi:      { label: 'Lo-Fi',      color: '#8a7e5e' },
   saturate2: { label: 'Saturate 2', color: '#d47a5e' },
+  peq:       { label: 'Param EQ',   color: '#5ec4b8' },
 };
 
 export interface EngineParams {
@@ -73,6 +84,8 @@ export interface EngineParams {
 
   eqEnabled: boolean;
   eqBands: EQBand[];
+
+  peqInstances: PeqInstance[];
 }
 
 export const DEFAULT_PARAMS: EngineParams = {
@@ -127,6 +140,8 @@ export const DEFAULT_PARAMS: EngineParams = {
     { freq: 4000, gain: 0, q: 1.0, type: 'peak' },
     { freq: 12000, gain: 0, q: 1.0, type: 'highshelf' },
   ],
+
+  peqInstances: [],
 };
 
 export type AnalysisCallback = (samples: Float32Array) => void;

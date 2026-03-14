@@ -7,7 +7,7 @@ import { Knob } from './components/Knob';
 import { AddFxButton } from './components/AddFxButton';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { FX_CATALOG } from './audio/engine';
-import type { EQBand, FilterType, FxSlot, FxType, EngineParams } from './audio/engine';
+import type { EQBand, FilterType, FxSlot, FxType, EngineParams, PeqInstance } from './audio/engine';
 
 // Electron API type
 declare global {
@@ -109,12 +109,29 @@ export default function App() {
   ]);
 
   const addFxSlot = useCallback((type: FxType) => {
-    setFxSlots(prev => [...prev, { id: crypto.randomUUID(), type }]);
-  }, []);
+    const newId = crypto.randomUUID();
+    setFxSlots(prev => [...prev, { id: newId, type }]);
+    if (type === 'peq') {
+      updateParams({
+        peqInstances: [...params.peqInstances, {
+          id: newId,
+          enabled: true,
+          mode: 'cut',
+          key: params.quantizeKey,
+          scale: params.quantizeScale,
+          amount: 0.5,
+          q: 5.0,
+        }],
+      });
+    }
+  }, [params.peqInstances, params.quantizeKey, params.quantizeScale, updateParams]);
 
   const removeFxSlot = useCallback((id: string) => {
     setFxSlots(prev => prev.filter(s => s.id !== id));
-  }, []);
+    updateParams({
+      peqInstances: params.peqInstances.filter(inst => inst.id !== id),
+    });
+  }, [params.peqInstances, updateParams]);
 
   // --- Keyboard shortcuts ---
   useEffect(() => {
@@ -452,6 +469,75 @@ export default function App() {
             />
           </EffectModule>
         );
+
+      case 'peq':
+        {
+        const peqNoteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const inst = params.peqInstances.find(p => p.id === slot.id);
+        if (!inst) return null;
+        const instIdx = params.peqInstances.indexOf(inst);
+        const updatePeq = (changes: Partial<PeqInstance>) => {
+          const updated = [...params.peqInstances];
+          updated[instIdx] = { ...updated[instIdx], ...changes };
+          updateParams({ peqInstances: updated });
+        };
+        return (
+          <EffectModule
+            key={slot.id}
+            title={meta.label}
+            color={meta.color}
+            enabled={inst.enabled}
+            onToggle={() => updatePeq({ enabled: !inst.enabled })}
+            onRemove={() => removeFxSlot(slot.id)}
+            subtitle={inst.scale}
+            subtitleOptions={['major', 'minor', 'pentatonic', 'dorian', 'mixolydian', 'harmonic_minor']}
+            onSubtitleChange={(v) => updatePeq({ scale: v })}
+          >
+            <button
+              onClick={() => updatePeq({ mode: inst.mode === 'boost' ? 'cut' : 'boost' })}
+              className="flex flex-col items-center justify-center rounded-lg px-2 py-1 transition-colors"
+              style={{
+                background: inst.mode === 'boost' ? '#5ec4b830' : '#c45e3e30',
+                border: `1px solid ${inst.mode === 'boost' ? '#5ec4b860' : '#c45e3e60'}`,
+                minWidth: 42,
+              }}
+              title={inst.mode === 'boost' ? 'Boosting in-key frequencies' : 'Cutting out-of-key frequencies'}
+            >
+              <span className="text-lg font-bold" style={{ color: inst.mode === 'boost' ? '#5ec4b8' : '#c45e3e' }}>
+                {inst.mode === 'boost' ? '(+)' : '(−)'}
+              </span>
+              <span className="text-[9px] uppercase tracking-wider" style={{ color: inst.mode === 'boost' ? '#5ec4b8' : '#c45e3e' }}>
+                {inst.mode === 'boost' ? 'Boost' : 'Cut'}
+              </span>
+            </button>
+            <Knob
+              label="Key"
+              value={inst.key}
+              onChange={(v) => updatePeq({ key: Math.round(v) })}
+              color={meta.color}
+              min={0}
+              max={11}
+              displayValue={peqNoteNames[Math.round(inst.key)]}
+            />
+            <Knob
+              label="Amount"
+              value={inst.amount}
+              onChange={(v) => updatePeq({ amount: v })}
+              color={meta.color}
+              displayValue={`${Math.round(inst.amount * 100)}%`}
+            />
+            <Knob
+              label="Q"
+              value={inst.q}
+              onChange={(v) => updatePeq({ q: v })}
+              color={meta.color}
+              min={0.5}
+              max={12}
+              displayValue={inst.q.toFixed(1)}
+            />
+          </EffectModule>
+        );
+        }
     }
   }
 
