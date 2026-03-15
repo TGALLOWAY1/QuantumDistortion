@@ -40,22 +40,18 @@ function OutputModule({ params, updateParams }: {
       </div>
       <div className="flex items-end justify-center gap-4 px-3 py-3 mt-auto">
         <Knob
-          label="Low"
-          value={params.lowGain}
-          onChange={(v) => updateParams({ lowGain: v })}
+          label="Sub Lvl"
+          value={params.quantizeSubLevel}
+          onChange={(v) => updateParams({ quantizeSubLevel: v })}
           color="#c45e3e"
-          min={0}
-          max={2}
-          displayValue={`${(params.lowGain * 100).toFixed(0)}%`}
+          displayValue={`${Math.round(params.quantizeSubLevel * 100)}%`}
         />
         <Knob
-          label="High"
-          value={params.highGain}
-          onChange={(v) => updateParams({ highGain: v })}
+          label="Air"
+          value={params.quantizeAirMix}
+          onChange={(v) => updateParams({ quantizeAirMix: v })}
           color="#8ab4c4"
-          min={0}
-          max={2}
-          displayValue={`${(params.highGain * 100).toFixed(0)}%`}
+          displayValue={`${Math.round(params.quantizeAirMix * 100)}%`}
         />
         <Knob
           label="Dry/Wet"
@@ -279,6 +275,7 @@ export default function App() {
       case 'quantize':
         {
         const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const scaleOptions = ['major', 'minor', 'pentatonic', 'dorian', 'mixolydian', 'harmonic_minor'];
         const scaleIntervals: Record<string, number[]> = {
           major: [0, 2, 4, 5, 7, 9, 11],
           minor: [0, 2, 3, 5, 7, 8, 10],
@@ -293,9 +290,21 @@ export default function App() {
         const subSourceIndex = subSources.indexOf(params.quantizeSubSource);
         const scaleDegreeMax = Math.max(0, scaleNoteCount - 1);
         const subDegreeDisplay = `Deg ${Math.round(params.quantizeSubDegree) + 1}`;
-        // For manual mode: show the actual note name from the scale
         const manualNoteIndex = Math.max(0, Math.min(scaleDegreeMax, Math.round(params.quantizeSubNote)));
         const manualNoteName = noteNames[(params.quantizeKey + currentScale[manualNoteIndex]) % 12];
+
+        const selectStyle = {
+          background: '#1a1a2e',
+          border: `1px solid ${meta.color}60`,
+          color: '#e8e8f0',
+          borderRadius: 6,
+          padding: '4px 6px',
+          fontSize: 11,
+          outline: 'none',
+          cursor: 'pointer',
+          minWidth: 60,
+        };
+
         return (
           <EffectModule
             key={slot.id}
@@ -304,10 +313,34 @@ export default function App() {
             enabled={params.quantizeEnabled}
             onToggle={() => updateParams({ quantizeEnabled: !params.quantizeEnabled })}
             onRemove={() => removeFxSlot(slot.id)}
-            subtitle={params.quantizeScale}
-            subtitleOptions={['major', 'minor', 'pentatonic', 'dorian', 'mixolydian', 'harmonic_minor']}
-            onSubtitleChange={(v) => updateParams({ quantizeScale: v })}
           >
+            {/* Key and Scale dropdowns in a dedicated row */}
+            <div className="flex items-center justify-center gap-3 w-full -mb-2">
+              <div className="flex flex-col items-center gap-1">
+                <label className="text-[9px] uppercase tracking-wider text-text-dim">Key</label>
+                <select
+                  value={params.quantizeKey}
+                  onChange={(e) => updateParams({ quantizeKey: Number(e.target.value) })}
+                  style={selectStyle}
+                >
+                  {noteNames.map((name, i) => (
+                    <option key={i} value={i}>{name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <label className="text-[9px] uppercase tracking-wider text-text-dim">Scale</label>
+                <select
+                  value={params.quantizeScale}
+                  onChange={(e) => updateParams({ quantizeScale: e.target.value })}
+                  style={{ ...selectStyle, minWidth: 90 }}
+                >
+                  {scaleOptions.map((s) => (
+                    <option key={s} value={s}>{s.replace('_', ' ')}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <Knob
               label="Strength"
               value={params.quantizeStrength}
@@ -323,15 +356,6 @@ export default function App() {
               min={0}
               max={1}
               displayValue={params.quantizeSubEnabled ? 'On' : 'Off'}
-            />
-            <Knob
-              label="Key"
-              value={params.quantizeKey}
-              onChange={(v) => updateParams({ quantizeKey: Math.round(v) })}
-              color={meta.color}
-              min={0}
-              max={11}
-              displayValue={noteNames[Math.round(params.quantizeKey)]}
             />
             <Knob
               label="Sub Src"
@@ -363,20 +387,6 @@ export default function App() {
               min={0}
               max={4}
               displayValue={`Oct ${Math.round(params.quantizeSubOctave)}`}
-            />
-            <Knob
-              label="Sub Lvl"
-              value={params.quantizeSubLevel}
-              onChange={(v) => updateParams({ quantizeSubLevel: v })}
-              color={meta.color}
-              displayValue={`${Math.round(params.quantizeSubLevel * 100)}%`}
-            />
-            <Knob
-              label="Air"
-              value={params.quantizeAirMix}
-              onChange={(v) => updateParams({ quantizeAirMix: v })}
-              color={meta.color}
-              displayValue={`${Math.round(params.quantizeAirMix * 100)}%`}
             />
           </EffectModule>
         );
@@ -565,6 +575,12 @@ export default function App() {
           onBandChange={handleBandChange}
           width={specWidth}
           height={specHeight}
+          quantizeBands={{
+            enabled: params.quantizeEnabled,
+            key: params.quantizeKey,
+            scale: params.quantizeScale,
+            strength: params.quantizeStrength,
+          }}
         />
       </div>
 

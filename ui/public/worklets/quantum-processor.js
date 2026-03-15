@@ -50,10 +50,10 @@ class QuantumProcessor extends AudioWorkletProcessor {
       saturate2Tilt: 0.5,
 
       // Spectral Quantize
-      quantizeEnabled: false,
+      quantizeEnabled: true,
       quantizeKey: 0,           // 0=C, 1=C#, etc.
       quantizeScale: 'major',
-      quantizeStrength: 0.7,
+      quantizeStrength: 1.0,
       quantizeSubEnabled: true,
       quantizeSubSource: 'root',
       quantizeSubNote: 0,

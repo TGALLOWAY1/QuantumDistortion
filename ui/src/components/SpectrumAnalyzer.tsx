@@ -1,12 +1,20 @@
 import { useRef, useEffect, useCallback } from 'react';
 import type { EQBand } from '../audio/engine';
 
+interface QuantizeBandInfo {
+  enabled: boolean;
+  key: number;
+  scale: string;
+  strength: number;
+}
+
 interface SpectrumAnalyzerProps {
   analyser: AnalyserNode | null;
   eqBands: EQBand[];
   onBandChange: (index: number, band: Partial<EQBand>) => void;
   width: number;
   height: number;
+  quantizeBands?: QuantizeBandInfo;
 }
 
 // Frequency label positions
@@ -75,7 +83,22 @@ function bandResponse(band: EQBand, freq: number): number {
   }
 }
 
-export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, height }: SpectrumAnalyzerProps) {
+// Scale intervals for drawing quantize band lines
+const SCALE_INTERVALS: Record<string, number[]> = {
+  major: [0, 2, 4, 5, 7, 9, 11],
+  minor: [0, 2, 3, 5, 7, 8, 10],
+  pentatonic: [0, 2, 4, 7, 9],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  harmonic_minor: [0, 2, 3, 5, 7, 8, 11],
+  chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+// Quantize band boundaries (frequencies outside sub and air are quantized)
+const QUANTIZE_SUB_HZ = 110;
+const QUANTIZE_AIR_HZ = 5000;
+
+export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, height, quantizeBands }: SpectrumAnalyzerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const draggingBand = useRef<number | null>(null);
@@ -235,6 +258,51 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
       ctx.fill();
     }
 
+    // --- Quantize band lines ---
+    if (quantizeBands && quantizeBands.enabled && quantizeBands.strength > 0) {
+      const scale = SCALE_INTERVALS[quantizeBands.scale] || SCALE_INTERVALS.major;
+      const key = quantizeBands.key;
+      const alpha = Math.min(0.6, quantizeBands.strength * 0.6);
+
+      // Draw vertical lines for each scale note in the body range (between sub and air)
+      for (let octave = 1; octave <= 7; octave++) {
+        for (const interval of scale) {
+          const midi = (octave + 1) * 12 + ((key + interval) % 12);
+          const freq = 440 * Math.pow(2, (midi - 69) / 12);
+
+          // Only draw in the quantize body range (between sub cutoff and air cutoff)
+          if (freq < QUANTIZE_SUB_HZ || freq > QUANTIZE_AIR_HZ) continue;
+          if (freq < 20 || freq > 20000) continue;
+
+          const x = freqToX(freq, width);
+          const isRoot = interval === 0;
+
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.strokeStyle = isRoot
+            ? `rgba(78, 196, 138, ${alpha})`
+            : `rgba(78, 196, 138, ${alpha * 0.4})`;
+          ctx.lineWidth = isRoot ? 1.5 : 0.5;
+          ctx.stroke();
+        }
+      }
+
+      // Draw subtle boundary indicators for sub and air cutoffs
+      const subX = freqToX(QUANTIZE_SUB_HZ, width);
+      const airX = freqToX(QUANTIZE_AIR_HZ, width);
+      ctx.setLineDash([4, 4]);
+      for (const bx of [subX, airX]) {
+        ctx.beginPath();
+        ctx.moveTo(bx, 0);
+        ctx.lineTo(bx, height);
+        ctx.strokeStyle = `rgba(78, 196, 138, 0.25)`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
     // --- Frequency labels ---
     ctx.fillStyle = '#555570';
     ctx.font = '10px Inter, sans-serif';
@@ -245,7 +313,7 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
     }
 
     animRef.current = requestAnimationFrame(draw);
-  }, [analyser, eqBands, width, height]);
+  }, [analyser, eqBands, width, height, quantizeBands]);
 
   useEffect(() => {
     animRef.current = requestAnimationFrame(draw);

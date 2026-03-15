@@ -103,7 +103,7 @@ export function EffectModule({
       )}
 
       {/* Controls */}
-      <div className="flex items-end justify-center gap-4 px-3 py-3">
+      <div className="flex flex-wrap items-end justify-center gap-4 px-3 py-3">
         {children}
       </div>
     </div>
