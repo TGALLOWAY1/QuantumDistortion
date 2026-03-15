@@ -38,14 +38,25 @@ export function AddFxButton({ onAdd }: AddFxButtonProps) {
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 mb-2 bg-surface-2 border border-border rounded-lg shadow-xl z-50 py-1 min-w-[140px]">
+        <div
+          className="fixed bg-surface-2 border border-border rounded-lg shadow-xl py-1 min-w-[140px]"
+          style={{
+            zIndex: 9999,
+            bottom: ref.current
+              ? window.innerHeight - ref.current.getBoundingClientRect().top + 8
+              : 'auto',
+            right: ref.current
+              ? window.innerWidth - ref.current.getBoundingClientRect().right
+              : 0,
+          }}
+        >
           {FX_TYPES.map((type) => {
             const meta = FX_CATALOG[type];
             return (
               <button
                 key={type}
                 onClick={() => { onAdd(type); setOpen(false); }}
-                className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary hover:bg-surface-3 transition-colors"
+                className="flex items-center gap-2 w-full px-3 py-2 text-sm text-text-secondary hover:text-text-primary hover:bg-surface-3 transition-colors"
               >
                 <div
                   className="w-2.5 h-2.5 rounded-full"

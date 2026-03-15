@@ -103,10 +103,10 @@ export const DEFAULT_PARAMS: EngineParams = {
   saturate2Drive: 0.5,
   saturate2Tilt: 0.5,
 
-  quantizeEnabled: false,
+  quantizeEnabled: true,
   quantizeKey: 0,
   quantizeScale: 'major',
-  quantizeStrength: 0.7,
+  quantizeStrength: 1.0,
   quantizeSubEnabled: true,
   quantizeSubSource: 'root',
   quantizeSubNote: 0,
