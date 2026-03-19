@@ -297,6 +297,7 @@ function makeTrackedNote(id, candidate) {
     state: 'mapped',
     age: 0,
     missingFrames: 0,
+    targetLockFrames: 0,
     phases: [0, 0, 0],
   };
 }
@@ -395,7 +396,19 @@ export class PolyphonicRetuneCore {
       retuneTargetMask: normalized.retuneTargetMask ? cloneMask(normalized.retuneTargetMask) : cloneMask(this.params.retuneTargetMask),
     };
     const enabledChanged = nextParams.retuneEnabled !== this.params.retuneEnabled;
+    const mappingChanged = (
+      nextParams.retuneKey !== this.params.retuneKey
+      || nextParams.retuneScale !== this.params.retuneScale
+      || nextParams.retuneOutOfMaskMode !== this.params.retuneOutOfMaskMode
+      || nextParams.retuneCollapseDuplicates !== this.params.retuneCollapseDuplicates
+      || nextParams.retuneTargetMask.some((enabled, index) => enabled !== this.params.retuneTargetMask[index])
+    );
     this.params = nextParams;
+    if (mappingChanged) {
+      for (const note of this.trackedNotes) {
+        note.targetLockFrames = 0;
+      }
+    }
     if (enabledChanged && !nextParams.retuneEnabled) {
       this.reset();
     }
@@ -615,57 +628,143 @@ export class PolyphonicRetuneCore {
       }
     }
 
-    keptNotes.sort((a, b) => b.energy - a.energy);
+    keptNotes.sort((a, b) => (
+      b.confidence - a.confidence
+      || b.age - a.age
+      || b.energy - a.energy
+      || a.id - b.id
+    ));
     const tonalNotes = keptNotes.filter(note => !note.isLowEnd).slice(0, MAX_TRACKED_NOTES);
     const lowNotes = keptNotes.filter(note => note.isLowEnd).slice(0, MAX_LOW_NOTES);
     this.trackedNotes = [...tonalNotes, ...lowNotes];
     this.assignTargets();
   }
 
+  resolveTargetDecision(sourceMidi, occupiedPitchClasses) {
+    const sourceRounded = Math.round(sourceMidi);
+    const sourcePitchClass = pitchClassForMidi(sourceRounded);
+    const targetMask = this.params.retuneTargetMask;
+    let targetMidi = sourceRounded;
+    let state = 'mapped';
+
+    if (targetMask[sourcePitchClass]) {
+      targetMidi = nearestMidiForPitchClass(sourceMidi, sourcePitchClass);
+    } else {
+      switch (this.params.retuneOutOfMaskMode) {
+        case 'preserve':
+          state = 'preserved';
+          break;
+        case 'mute':
+          state = 'muted';
+          break;
+        default: {
+          const nearest = findNearestAllowedMidi(sourceMidi, targetMask, occupiedPitchClasses);
+          if (nearest === null) {
+            state = 'preserved';
+          } else {
+            targetMidi = nearest;
+          }
+          break;
+        }
+      }
+    }
+
+    return {
+      sourceRounded,
+      state,
+      targetMidi,
+    };
+  }
+
+  applyTargetHysteresis(note, nextDecision, occupiedPitchClasses) {
+    const targetMask = this.params.retuneTargetMask;
+    const previousState = note.state;
+    const previousTarget = note.targetMidi;
+    let { state, targetMidi } = nextDecision;
+
+    if (
+      previousState === 'mapped'
+      && state === 'mapped'
+      && Number.isFinite(previousTarget)
+    ) {
+      const previousPitchClass = pitchClassForMidi(previousTarget);
+      const previousAllowed = targetMask[previousPitchClass];
+      const previousFree = !occupiedPitchClasses || !occupiedPitchClasses.has(previousPitchClass);
+
+      if (previousAllowed && previousFree) {
+        const previousError = Math.abs(note.sourceMidi - previousTarget);
+        const nextError = Math.abs(note.sourceMidi - targetMidi);
+        const improvement = previousError - nextError;
+        const hysteresisMargin = note.confidence < 0.28
+          ? 0.95
+          : note.confidence < 0.45
+            ? 0.6
+            : 0.32;
+        const semitoneStep = Math.abs(targetMidi - previousTarget);
+
+        if (
+          note.targetLockFrames > 0
+          || (semitoneStep <= 2 && improvement < hysteresisMargin)
+        ) {
+          targetMidi = previousTarget;
+        }
+      }
+    }
+
+    if (
+      previousState === 'mapped'
+      && state !== 'mapped'
+      && note.confidence < 0.24
+      && Number.isFinite(previousTarget)
+    ) {
+      const previousPitchClass = pitchClassForMidi(previousTarget);
+      const previousAllowed = targetMask[previousPitchClass];
+      const previousFree = !occupiedPitchClasses || !occupiedPitchClasses.has(previousPitchClass);
+      if (previousAllowed && previousFree) {
+        state = 'mapped';
+        targetMidi = previousTarget;
+      }
+    }
+
+    if (state !== previousState || targetMidi !== previousTarget) {
+      note.targetLockFrames = note.confidence < 0.3 ? 8 : 5;
+    } else {
+      note.targetLockFrames = Math.max(0, note.targetLockFrames - 1);
+    }
+
+    return {
+      state,
+      targetMidi,
+    };
+  }
+
   assignTargets() {
     const occupiedPitchClasses = this.params.retuneCollapseDuplicates ? null : new Set();
-    const targetMask = this.params.retuneTargetMask;
-
     for (const note of this.trackedNotes) {
-      const sourceRounded = Math.round(note.sourceMidi);
-      const sourcePitchClass = pitchClassForMidi(sourceRounded);
-      let targetMidi = sourceRounded;
-      let state = 'mapped';
+      const nextDecision = this.resolveTargetDecision(note.sourceMidi, occupiedPitchClasses);
+      let { targetMidi, state } = this.applyTargetHysteresis(note, nextDecision, occupiedPitchClasses);
+      const confidenceFloor = note.isLowEnd ? 0.16 : 0.22;
+      const eligibleForMapping = note.confidence >= confidenceFloor && (note.age >= 2 || note.targetLockFrames > 0);
 
-      if (targetMask[sourcePitchClass]) {
-        targetMidi = nearestMidiForPitchClass(note.sourceMidi, sourcePitchClass);
-      } else {
-        switch (this.params.retuneOutOfMaskMode) {
-          case 'preserve':
-            targetMidi = sourceRounded;
-            state = 'preserved';
-            break;
-          case 'mute':
-            targetMidi = sourceRounded;
-            state = 'muted';
-            break;
-          default: {
-            const nearest = findNearestAllowedMidi(note.sourceMidi, targetMask, occupiedPitchClasses);
-            if (nearest === null) {
-              targetMidi = sourceRounded;
-              state = 'preserved';
-            } else {
-              targetMidi = nearest;
-            }
-            break;
-          }
+      if (state === 'mapped' && !eligibleForMapping) {
+        if (note.targetLockFrames > 0 && Number.isFinite(note.targetMidi)) {
+          targetMidi = note.targetMidi;
+        } else {
+          state = 'preserved';
+          targetMidi = nextDecision.sourceRounded;
         }
       }
 
       if (!this.params.retuneCollapseDuplicates && state === 'mapped') {
         const targetPitchClass = pitchClassForMidi(targetMidi);
         if (occupiedPitchClasses.has(targetPitchClass)) {
-          const alternate = findNearestAllowedMidi(note.sourceMidi, targetMask, occupiedPitchClasses);
-          if (alternate === null) {
-            state = 'preserved';
-            targetMidi = sourceRounded;
-          } else {
+          const alternate = findNearestAllowedMidi(note.sourceMidi, this.params.retuneTargetMask, occupiedPitchClasses);
+          if (alternate !== null && alternate !== note.targetMidi) {
             targetMidi = alternate;
+            note.targetLockFrames = Math.min(note.targetLockFrames, 2);
+          } else {
+            state = 'preserved';
+            targetMidi = nextDecision.sourceRounded;
           }
         }
         if (state === 'mapped') {
@@ -677,7 +776,12 @@ export class PolyphonicRetuneCore {
       note.state = state;
     }
 
-    this.trackedNotes.sort((a, b) => b.energy - a.energy);
+    this.trackedNotes.sort((a, b) => (
+      b.confidence - a.confidence
+      || b.age - a.age
+      || b.energy - a.energy
+      || a.id - b.id
+    ));
     this.noteCount = this.trackedNotes.length;
     const strongest = this.trackedNotes[0];
     this.detectedPitch = strongest ? midiToFreq(strongest.sourceMidi) : 0;

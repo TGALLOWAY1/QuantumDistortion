@@ -1,9 +1,14 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import type { EQBand } from '../audio/engine';
+import type { EQBand, RetuneStatus } from '../audio/engine';
+import { formatMidiNote, midiToFreq, NOTE_NAMES } from '../audio/retune';
 
 interface SpectrumAnalyzerProps {
   analyser: AnalyserNode | null;
   eqBands: EQBand[];
+  retuneStatus: RetuneStatus | null;
+  retuneEnabled: boolean;
+  retuneKey: number;
+  retuneScale: string;
   onBandChange: (index: number, band: Partial<EQBand>) => void;
   width: number;
   height: number;
@@ -15,6 +20,11 @@ const FREQ_VALUES = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
 
 // Band colors matching the effect module accents
 const BAND_COLORS = ['#c45e3e', '#4a6fa5', '#4ec48a', '#8a5ec4', '#3eafc4'];
+const RETUNE_STATE_COLORS = {
+  mapped: '#4ec48a',
+  preserved: '#8b90ad',
+  muted: '#d96b6b',
+} as const;
 
 function freqToX(freq: number, width: number): number {
   const minLog = Math.log10(20);
@@ -36,6 +46,35 @@ function gainToY(gain: number, height: number): number {
 
 function yToGain(y: number, height: number): number {
   return -((y - height / 2) / (height / 2)) * 24;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+function formatKeyLabel(key: number): string {
+  return NOTE_NAMES[((Math.round(key) % 12) + 12) % 12];
 }
 
 /** Compute approximate EQ response contribution for a single band at a given frequency */
@@ -75,7 +114,17 @@ function bandResponse(band: EQBand, freq: number): number {
   }
 }
 
-export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, height }: SpectrumAnalyzerProps) {
+export function SpectrumAnalyzer({
+  analyser,
+  eqBands,
+  retuneStatus,
+  retuneEnabled,
+  retuneKey,
+  retuneScale,
+  onBandChange,
+  width,
+  height,
+}: SpectrumAnalyzerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const draggingBand = useRef<number | null>(null);
@@ -244,7 +293,92 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
       const x = freqToX(FREQ_VALUES[i], width);
       ctx.fillText(String(FREQ_LABELS[i]), x, height - 4);
     }
-  }, [analyser, eqBands, width, height]);
+
+    if (retuneEnabled) {
+      const overlayNotes = [...(retuneStatus?.notes ?? [])]
+        .sort((a, b) => b.energy - a.energy)
+        .slice(0, 4);
+      const overlayHeight = 42 + overlayNotes.length * 18;
+      const overlayWidth = width - 24;
+
+      ctx.save();
+      drawRoundedRect(ctx, 12, 12, overlayWidth, overlayHeight, 12);
+      const overlayGradient = ctx.createLinearGradient(12, 12, 12, 12 + overlayHeight);
+      overlayGradient.addColorStop(0, 'rgba(13, 13, 26, 0.9)');
+      overlayGradient.addColorStop(1, 'rgba(20, 20, 43, 0.76)');
+      ctx.fillStyle = overlayGradient;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(78, 196, 138, 0.22)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.textAlign = 'left';
+      ctx.font = '11px Inter, sans-serif';
+      ctx.fillStyle = '#e8e8f0';
+      const stateLabel = !retuneStatus
+        ? 'Waiting'
+        : retuneStatus.overloaded
+          ? 'Overloaded'
+          : retuneStatus.noteCount > 0
+            ? 'Tracking'
+            : 'Listening';
+      ctx.fillText(`RETUNE ${formatKeyLabel(retuneKey)} ${retuneScale.replace('_', ' ')} · ${stateLabel}`, 24, 31);
+
+      ctx.font = '10px Inter, sans-serif';
+      ctx.fillStyle = '#8888a8';
+      const meta = [
+        `${retuneStatus?.noteCount ?? 0} groups`,
+        retuneStatus ? `${Math.round(retuneStatus.confidence * 100)}% conf` : 'no lock',
+        retuneStatus?.lowEndLocked ? 'low locked' : 'low floating',
+      ];
+      if (retuneStatus?.transientBypassActive) {
+        meta.push('attack hold');
+      }
+      ctx.fillText(meta.join(' · '), 24, 47);
+
+      overlayNotes.forEach((note, index) => {
+        const sourceX = clamp(freqToX(midiToFreq(note.sourceMidi), width), 90, width - 24);
+        const targetX = clamp(freqToX(midiToFreq(note.targetMidi), width), 90, width - 24);
+        const y = 67 + index * 18;
+        const color = RETUNE_STATE_COLORS[note.state];
+        const label = note.state === 'mapped'
+          ? `${formatMidiNote(note.sourceMidi)} → ${formatMidiNote(note.targetMidi)}`
+          : `${formatMidiNote(note.sourceMidi)} ${note.state}`;
+
+        ctx.strokeStyle = `${color}cc`;
+        ctx.lineWidth = note.isLowEnd ? 2.2 : 1.4;
+        ctx.beginPath();
+        ctx.moveTo(sourceX, y);
+        ctx.lineTo(targetX, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#0d0d1a';
+        ctx.beginPath();
+        ctx.arc(sourceX, y, 3.5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(targetX, y, 4.5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+
+        const chipText = note.isLowEnd ? `${label} · LOW` : label;
+        ctx.font = '10px Inter, sans-serif';
+        const chipWidth = ctx.measureText(chipText).width + 14;
+        const chipX = clamp((sourceX + targetX) / 2 - chipWidth / 2, 96, width - chipWidth - 18);
+        drawRoundedRect(ctx, chipX, y - 10, chipWidth, 16, 8);
+        ctx.fillStyle = 'rgba(20, 20, 43, 0.94)';
+        ctx.fill();
+        ctx.strokeStyle = `${color}55`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = note.state === 'muted' ? '#f3b2b2' : '#d7d9e5';
+        ctx.fillText(chipText, chipX + 7, y + 4);
+      });
+      ctx.restore();
+    }
+  }, [analyser, eqBands, retuneEnabled, retuneKey, retuneScale, retuneStatus, width, height]);
 
   useEffect(() => {
     const render = () => {

@@ -512,6 +512,10 @@ export default function App() {
         <SpectrumAnalyzer
           analyser={engine?.getAnalyser() ?? null}
           eqBands={params.eqBands}
+          retuneStatus={retuneStatus}
+          retuneEnabled={params.retuneEnabled}
+          retuneKey={params.retuneKey}
+          retuneScale={params.retuneScale}
           onBandChange={handleBandChange}
           width={specWidth}
           height={specHeight}

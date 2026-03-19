@@ -1,7 +1,7 @@
 import { EffectModule } from './EffectModule';
 import { Knob } from './Knob';
 import type { EngineParams, RetuneStatus } from '../audio/engine';
-import { NOTE_NAMES, RETUNE_SCALES, buildScaleMask, formatMidiNote } from '../audio/retune';
+import { NOTE_NAMES, RETUNE_SCALES, buildScaleMask } from '../audio/retune';
 
 interface RetuneModuleProps {
   color: string;
@@ -18,10 +18,6 @@ function formatScaleLabel(scale: string) {
   return scale.replace('_', ' ');
 }
 
-function formatLatency(ms: number | undefined) {
-  return Number.isFinite(ms) ? `${Math.round(ms ?? 0)} ms` : '—';
-}
-
 export function RetuneModule({
   color,
   params,
@@ -32,7 +28,6 @@ export function RetuneModule({
   const targetMask = params.retuneTargetMask.length === 12
     ? params.retuneTargetMask
     : buildScaleMask(params.retuneKey, params.retuneScale);
-  const sortedNotes = [...(status?.notes ?? [])].sort((a, b) => b.energy - a.energy).slice(0, 6);
 
   const stateLabel = !params.retuneEnabled
     ? 'Off'
@@ -76,121 +71,84 @@ export function RetuneModule({
       subtitle={formatScaleLabel(params.retuneScale)}
       subtitleOptions={SCALE_OPTIONS}
       onSubtitleChange={(value) => handleScaleChange(value as EngineParams['retuneScale'])}
-      minWidth={560}
+      minWidth={500}
       controlsClassName="flex flex-col gap-3 px-3 py-3"
     >
-      <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3">
-        <div className="rounded-lg border border-border bg-surface-2/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Status</div>
-              <div className="mt-1 text-sm font-semibold text-text-primary">{stateLabel}</div>
-            </div>
-            <div className="text-right text-[11px] text-text-secondary">
-              <div>{status?.backendName ?? 'Waiting for engine'}</div>
-              <div>{formatLatency(status?.analysisLatencyMs)}</div>
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-text-secondary">
-            <div className="rounded-md bg-surface-1/80 px-2 py-1.5">
-              <div className="text-text-dim">Detected</div>
-              <div className="mt-0.5 text-text-primary">{formatMidiNote(status?.notes[0]?.sourceMidi ?? Number.NaN)}</div>
-            </div>
-            <div className="rounded-md bg-surface-1/80 px-2 py-1.5">
-              <div className="text-text-dim">Target</div>
-              <div className="mt-0.5 text-text-primary">{formatMidiNote(status?.notes[0]?.targetMidi ?? Number.NaN)}</div>
-            </div>
-            <div className="rounded-md bg-surface-1/80 px-2 py-1.5">
-              <div className="text-text-dim">Confidence</div>
-              <div className="mt-0.5 text-text-primary">{status ? `${Math.round(status.confidence * 100)}%` : '—'}</div>
-            </div>
-            <div className="rounded-md bg-surface-1/80 px-2 py-1.5">
-              <div className="text-text-dim">Low End</div>
-              <div className="mt-0.5 text-text-primary">
-                {status?.lowEndLocked ? 'Locked' : 'Loose'}
-                {status?.transientBypassActive ? ' · Attack Hold' : ''}
-              </div>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {sortedNotes.length > 0 ? (
-              sortedNotes.map((note, index) => (
-                <div
-                  key={`${note.sourceMidi}-${note.targetMidi}-${index}`}
-                  className="rounded-md border border-border bg-surface-1/90 px-2 py-1.5 text-[11px] text-text-secondary"
-                >
-                  <div className="flex items-center gap-1.5 text-text-primary">
-                    <span>{formatMidiNote(note.sourceMidi)}</span>
-                    <span className="text-text-dim">→</span>
-                    <span>{formatMidiNote(note.targetMidi)}</span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-text-dim">
-                    <span>{note.state}</span>
-                    {note.isLowEnd && <span className="text-[#4ec48a]">Low</span>}
-                    <span>{Math.round(note.confidence * 100)}%</span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="text-[11px] text-text-dim">No tracked note groups yet.</div>
-            )}
+      <div className="rounded-lg border border-border bg-surface-2/60 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="rounded-full border border-border bg-surface-1/80 px-2.5 py-1 uppercase tracking-[0.24em] text-text-dim">
+            {stateLabel}
+          </span>
+          <span className="text-text-secondary">
+            {status ? `${status.noteCount} groups · ${Math.round(status.confidence * 100)}% conf` : 'Waiting for engine'}
+          </span>
+          {status?.lowEndLocked && (
+            <span className="rounded-full bg-[#4ec48a22] px-2 py-1 text-[#9ce0b8]">
+              Low End Locked
+            </span>
+          )}
+          {status?.transientBypassActive && (
+            <span className="rounded-full bg-surface-1 px-2 py-1 text-text-secondary">
+              Preserve Attacks Active
+            </span>
+          )}
+          <div className="ml-auto text-[11px] text-text-dim">
+            Live note routes are shown in the spectrum.
           </div>
         </div>
+      </div>
 
-        <div className="rounded-lg border border-border bg-surface-2/60 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Target Mask</div>
-            <button
-              onClick={() => updateParams({ retuneTargetMask: buildScaleMask(params.retuneKey, params.retuneScale) })}
-              className="rounded border border-border px-2 py-1 text-[10px] uppercase tracking-wide text-text-secondary transition-colors hover:border-text-dim hover:text-text-primary"
-            >
-              Reset
-            </button>
-          </div>
-          <div className="mt-3 grid grid-cols-4 gap-2">
-            {NOTE_NAMES.map((noteName, pitchClass) => {
-              const active = Boolean(targetMask[pitchClass]);
-              const isKeyRoot = pitchClass === params.retuneKey;
-              return (
-                <button
-                  key={noteName}
-                  onClick={() => handleMaskToggle(pitchClass)}
-                  className="rounded-md border px-2 py-2 text-xs font-medium transition-colors"
-                  style={{
-                    background: active ? `${color}22` : '#14142b',
-                    borderColor: active ? `${color}66` : '#3a3a5c',
-                    color: active ? '#e8e8f0' : '#8888a8',
-                    boxShadow: isKeyRoot ? `inset 0 0 0 1px ${color}` : 'none',
-                  }}
-                >
-                  {noteName}
-                </button>
-              );
-            })}
-          </div>
-          <div className="mt-3">
-            <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Out of Mask</div>
-            <div className="mt-2 flex gap-2">
-              {OUT_OF_MASK_MODES.map((mode) => {
-                const active = params.retuneOutOfMaskMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    onClick={() => updateParams({ retuneOutOfMaskMode: mode })}
-                    className="rounded-md border px-2.5 py-1.5 text-[11px] uppercase tracking-wide transition-colors"
-                    style={{
-                      background: active ? `${color}22` : '#14142b',
-                      borderColor: active ? `${color}66` : '#3a3a5c',
-                      color: active ? '#e8e8f0' : '#8888a8',
-                    }}
-                  >
-                    {mode}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="mt-3 flex gap-2">
+      <div className="rounded-lg border border-border bg-surface-2/60 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Target Mask</div>
+          <button
+            onClick={() => updateParams({ retuneTargetMask: buildScaleMask(params.retuneKey, params.retuneScale) })}
+            className="rounded border border-border px-2 py-1 text-[10px] uppercase tracking-wide text-text-secondary transition-colors hover:border-text-dim hover:text-text-primary"
+          >
+            Reset
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-6 gap-2">
+          {NOTE_NAMES.map((noteName, pitchClass) => {
+            const active = Boolean(targetMask[pitchClass]);
+            const isKeyRoot = pitchClass === params.retuneKey;
+            return (
+              <button
+                key={noteName}
+                onClick={() => handleMaskToggle(pitchClass)}
+                className="rounded-md border px-2 py-2 text-xs font-medium transition-colors"
+                style={{
+                  background: active ? `${color}22` : '#14142b',
+                  borderColor: active ? `${color}66` : '#3a3a5c',
+                  color: active ? '#e8e8f0' : '#8888a8',
+                  boxShadow: isKeyRoot ? `inset 0 0 0 1px ${color}` : 'none',
+                }}
+              >
+                {noteName}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Out of Mask</span>
+          {OUT_OF_MASK_MODES.map((mode) => {
+            const active = params.retuneOutOfMaskMode === mode;
+            return (
+              <button
+                key={mode}
+                onClick={() => updateParams({ retuneOutOfMaskMode: mode })}
+                className="rounded-md border px-2.5 py-1.5 text-[11px] uppercase tracking-wide transition-colors"
+                style={{
+                  background: active ? `${color}22` : '#14142b',
+                  borderColor: active ? `${color}66` : '#3a3a5c',
+                  color: active ? '#e8e8f0' : '#8888a8',
+                }}
+              >
+                {mode}
+              </button>
+            );
+          })}
+          <div className="ml-auto flex flex-wrap gap-2">
             <button
               onClick={() => updateParams({ retunePreserveTransients: !params.retunePreserveTransients })}
               className="rounded-md border px-2.5 py-1.5 text-[11px] uppercase tracking-wide transition-colors"
