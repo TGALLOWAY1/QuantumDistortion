@@ -1,6 +1,7 @@
 # Quantum Distortion
 
-<img width="1024" height="559" alt="Quantum Distortion UI Mockup" src="https://github.com/user-attachments/assets/2000d791-a24c-44bf-aecd-5eb478be0ce0" />
+<img width="1507" height="820" alt="image" src="https://github.com/user-attachments/assets/547193e9-cba9-44fc-b299-3d4faf519702" />
+
 
 **Spectral pitch quantization meets time-domain distortion.** Quantum Distortion is an experimental DSP engine that snaps audio frequencies to a musical scale while applying creative distortion effects, producing unique harmonic textures from any source material.
 
