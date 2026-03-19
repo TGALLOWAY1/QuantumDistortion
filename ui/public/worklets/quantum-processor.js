@@ -38,6 +38,9 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
       ...DEFAULT_RETUNE_PARAMS,
 
+      subEnabled: true,
+      subLevel: 0.25,
+
       lowGain: 1.0,
       highGain: 1.0,
       _devDriveRange: 0.4,
@@ -96,6 +99,10 @@ class QuantumProcessor extends AudioWorkletProcessor {
 
     this.blockInputScratch = Array.from({ length: MAX_CHANNELS }, () => new Float32Array(128));
     this.blockRetuneScratch = Array.from({ length: MAX_CHANNELS }, () => new Float32Array(128));
+    this.subBlockScratch = new Float32Array(128);
+    this.subPhase = 0;
+    this.subSmoothedFreq = 0;
+    this.subSmoothedLevel = 0;
 
     this.analysisSamples = new Float32Array(2048);
     this.analysisWritePos = 0;
@@ -112,7 +119,14 @@ class QuantumProcessor extends AudioWorkletProcessor {
       }
 
       const retunePatch = normalizeRetuneParamPatch(event.data.params, this.params);
-      Object.assign(this.params, event.data.params, retunePatch);
+      const legacySubPatch = {};
+      if (Object.prototype.hasOwnProperty.call(event.data.params, 'quantizeSubEnabled')) {
+        legacySubPatch.subEnabled = Boolean(event.data.params.quantizeSubEnabled);
+      }
+      if (Object.prototype.hasOwnProperty.call(event.data.params, 'quantizeSubLevel')) {
+        legacySubPatch.subLevel = event.data.params.quantizeSubLevel;
+      }
+      Object.assign(this.params, event.data.params, legacySubPatch, retunePatch);
       this.retuneCore.setParams(retunePatch);
       this.eqDirty = true;
       this.peqDirty = true;
@@ -129,6 +143,29 @@ class QuantumProcessor extends AudioWorkletProcessor {
     }
     this.blockInputScratch = Array.from({ length: MAX_CHANNELS }, () => new Float32Array(length));
     this.blockRetuneScratch = Array.from({ length: MAX_CHANNELS }, () => new Float32Array(length));
+    this.subBlockScratch = new Float32Array(length);
+  }
+
+  renderSubBlock(length, subGuide) {
+    const targetFrequency = this.params.subEnabled ? Math.max(0, subGuide.frequency || 0) : 0;
+    const targetLevel = this.params.subEnabled ? (subGuide.level || 0) * this.params.subLevel : 0;
+
+    for (let i = 0; i < length; i++) {
+      this.subSmoothedFreq += (targetFrequency - this.subSmoothedFreq) * 0.012;
+      this.subSmoothedLevel += (targetLevel - this.subSmoothedLevel) * 0.02;
+
+      if (this.subSmoothedFreq > 1 && this.subSmoothedLevel > 1e-4) {
+        this.subPhase += TWO_PI * this.subSmoothedFreq / sampleRate;
+        if (this.subPhase > TWO_PI) {
+          this.subPhase -= TWO_PI;
+        }
+        this.subBlockScratch[i] = Math.sin(this.subPhase) * this.subSmoothedLevel * 0.42;
+      } else {
+        this.subBlockScratch[i] = 0;
+      }
+    }
+
+    return this.subBlockScratch;
   }
 
   computeEQCoeffs() {
@@ -420,6 +457,7 @@ class QuantumProcessor extends AudioWorkletProcessor {
     const retuneTimeMs = (globalThis.performance?.now?.() ?? retuneStart) - retuneStart;
     const blockBudgetMs = (length / sampleRate) * 1000;
     this.retuneCore.setRuntimeHealth({ overloaded: retuneTimeMs > blockBudgetMs * 0.85 });
+    const subBlock = this.renderSubBlock(length, this.retuneCore.getSubGuide());
 
     for (let ch = 0; ch < numChannels; ch++) {
       const channelOutput = output[ch];
@@ -471,6 +509,8 @@ class QuantumProcessor extends AudioWorkletProcessor {
             this.params.saturate2Tilt,
           );
         }
+
+        sample += subBlock[i];
 
         sample = dry * (1 - this.params.dryWet) + sample * this.params.dryWet;
         sample *= this.params.masterGain;

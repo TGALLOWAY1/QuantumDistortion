@@ -297,13 +297,6 @@ export function RetuneModule({
           displayValue={`${Math.round(params.retuneLowEndBlend * 100)}%`}
         />
         <Knob
-          label="Sub"
-          value={params.retuneSubReinforcement}
-          onChange={(value) => updateParams({ retuneSubReinforcement: value })}
-          color={color}
-          displayValue={`${Math.round(params.retuneSubReinforcement * 100)}%`}
-        />
-        <Knob
           label="Air"
           value={params.retuneAirMix}
           onChange={(value) => updateParams({ retuneAirMix: value })}

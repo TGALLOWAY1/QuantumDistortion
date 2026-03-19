@@ -59,7 +59,6 @@ export const DEFAULT_RETUNE_PARAMS = {
   retuneLowEndMode: 'hybrid',
   retuneLowEndBlend: 0.55,
   retuneCollapseDuplicates: false,
-  retuneSubReinforcement: 0.25,
   retuneAirMix: 1.0,
 };
 
@@ -69,8 +68,6 @@ const LEGACY_PARAM_ALIASES = {
   quantizeScale: 'retuneScale',
   quantizeStrength: 'retuneStrength',
   quantizeAirMix: 'retuneAirMix',
-  quantizeSubEnabled: 'retuneSubReinforcement',
-  quantizeSubLevel: 'retuneSubReinforcement',
 };
 
 function cloneMask(mask) {
@@ -99,13 +96,7 @@ export function normalizeRetuneParamPatch(patch, currentParams = DEFAULT_RETUNE_
       continue;
     }
 
-    if (key === 'quantizeSubEnabled') {
-      normalized[alias] = value ? currentParams.retuneSubReinforcement : 0;
-    } else if (key === 'quantizeSubLevel') {
-      normalized[alias] = value;
-    } else {
-      normalized[alias] = value;
-    }
+    normalized[alias] = value;
   }
 
   if (Object.prototype.hasOwnProperty.call(normalized, 'retuneScale')) {
@@ -137,9 +128,6 @@ export function normalizeRetuneParamPatch(patch, currentParams = DEFAULT_RETUNE_
     }
   }
 
-  if (Object.prototype.hasOwnProperty.call(normalized, 'retuneSubReinforcement')) {
-    normalized.retuneSubReinforcement = clamp(Number(normalized.retuneSubReinforcement) || 0, 0, 1);
-  }
   if (Object.prototype.hasOwnProperty.call(normalized, 'retuneDeadbandCents')) {
     normalized.retuneDeadbandCents = clamp(Number(normalized.retuneDeadbandCents) || 0, 0, 60);
   }
@@ -378,6 +366,8 @@ export class PolyphonicRetuneCore {
     this.smoothedRatio = 1;
     this.detectorEnv = 0;
     this.confidence = 0;
+    this.subGuideFrequency = 0;
+    this.subGuideLevel = 0;
 
     this.tonalWritePos = 0;
     this.tonalInputSampleCount = 0;
@@ -447,6 +437,8 @@ export class PolyphonicRetuneCore {
     this.smoothedRatio = 1;
     this.detectorEnv = 0;
     this.confidence = 0;
+    this.subGuideFrequency = 0;
+    this.subGuideLevel = 0;
     this.prevTonalMagnitudes.fill(0);
     this.tonalMonoRing.fill(0);
     this.lowMonoRing.fill(0);
@@ -799,6 +791,21 @@ export class PolyphonicRetuneCore {
     this.smoothedRatio += (this.targetRatio - this.smoothedRatio) * 0.18;
     this.confidence = strongest ? strongest.confidence : 0;
     this.lowEndLocked = this.trackedNotes.some(note => note.isLowEnd && note.confidence > 0.18 && note.state !== 'muted');
+
+    const strongestLow = this.trackedNotes.find(
+      (note) => note.isLowEnd && note.confidence > 0.12 && note.state !== 'muted',
+    );
+    if (strongestLow) {
+      const correctionBlend = this.getCorrectionBlend(strongestLow);
+      const effectiveMidi = strongestLow.state === 'mapped'
+        ? strongestLow.sourceMidi + (strongestLow.targetMidi - strongestLow.sourceMidi) * correctionBlend
+        : strongestLow.sourceMidi;
+      this.subGuideFrequency = midiToFreq(effectiveMidi);
+      this.subGuideLevel = clamp(strongestLow.confidence * 0.9, 0, 1);
+    } else {
+      this.subGuideFrequency = 0;
+      this.subGuideLevel = 0;
+    }
   }
 
   analyzeTonalFrame() {
@@ -1074,8 +1081,6 @@ export class PolyphonicRetuneCore {
 
     const totalEnergy = lowNotes.reduce((sum, note) => sum + note.energy, 0);
     let sample = 0;
-    let strongestTarget = 0;
-    let strongestWeight = 0;
 
     for (const note of lowNotes) {
       const correctionBlend = this.getCorrectionBlend(note);
@@ -1084,10 +1089,6 @@ export class PolyphonicRetuneCore {
         : note.sourceMidi;
       const targetFreq = midiToFreq(targetMidi);
       const weight = clamp(note.energy / Math.max(totalEnergy, 1e-6), 0, 1) * note.confidence;
-      if (weight > strongestWeight) {
-        strongestWeight = weight;
-        strongestTarget = targetFreq;
-      }
 
       const harmonicWeights = [1.0, 0.45, 0.18];
       for (let harmonic = 0; harmonic < harmonicWeights.length; harmonic++) {
@@ -1100,15 +1101,15 @@ export class PolyphonicRetuneCore {
       }
     }
 
-    if (this.params.retuneSubReinforcement > 0 && strongestTarget > 0) {
-      this.subPhase = (this.subPhase || 0) + TWO_PI * strongestTarget / this.sampleRate;
-      if (this.subPhase > TWO_PI) {
-        this.subPhase -= TWO_PI;
-      }
-      sample += Math.sin(this.subPhase) * this.params.retuneSubReinforcement * strongestWeight;
-    }
-
     return sample * 0.35;
+  }
+
+  getSubGuide() {
+    return {
+      frequency: this.subGuideFrequency,
+      level: this.subGuideLevel,
+      locked: this.lowEndLocked,
+    };
   }
 
   processBlock(inputBlock, numChannels, length, mix = { lowGain: 1, highGain: 1 }) {

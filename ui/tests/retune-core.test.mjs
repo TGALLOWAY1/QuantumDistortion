@@ -76,14 +76,12 @@ test('normalizes legacy quantize params into retune params', () => {
     quantizeKey: 2,
     quantizeScale: 'minor',
     quantizeStrength: 0.82,
-    quantizeSubLevel: 0.41,
   });
 
   assert.equal(normalized.retuneEnabled, true);
   assert.equal(normalized.retuneKey, 2);
   assert.equal(normalized.retuneScale, 'minor');
   assert.equal(normalized.retuneStrength, 0.82);
-  assert.equal(normalized.retuneSubReinforcement, 0.41);
   assert.deepEqual(normalized.retuneTargetMask, buildScaleMask(2, 'minor'));
 });
 
@@ -93,7 +91,6 @@ test('tracks low-end notes and remaps them to the nearest allowed pitch class', 
       retuneKey: 0,
       retuneScale: 'major',
       retuneLowEndBlend: 0.75,
-      retuneSubReinforcement: 0,
     },
     sampleAt(sampleIndex) {
       return (
@@ -216,7 +213,6 @@ test('in-scale notes inside the correction window are not pulled hard to equal t
       retuneScale: 'minor',
       retuneStrength: 1,
       retuneTextureAmount: 0,
-      retuneSubReinforcement: 0,
     },
     sampleAt(sampleIndex) {
       return Math.sin((2 * Math.PI * sourceFreq * sampleIndex) / SAMPLE_RATE) * 0.7;

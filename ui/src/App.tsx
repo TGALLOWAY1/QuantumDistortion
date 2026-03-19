@@ -10,8 +10,8 @@ import { useAudioEngine } from './hooks/useAudioEngine';
 import { FX_CATALOG } from './audio/engine';
 import type { EQBand, FilterType, FxSlot, FxType, EngineParams, PeqInstance } from './audio/engine';
 
-const FX_ORDER: FxType[] = ['peq', 'saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2'];
-const SINGLETON_FX: FxType[] = ['saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2'];
+const FX_ORDER: FxType[] = ['peq', 'saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2', 'sub'];
+const SINGLETON_FX: FxType[] = ['saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2', 'sub'];
 
 // Electron API type
 declare global {
@@ -111,6 +111,7 @@ export default function App() {
     { id: crypto.randomUUID(), type: 'saturate' },
     { id: crypto.randomUUID(), type: 'retune' },
     { id: crypto.randomUUID(), type: 'saturate2' },
+    { id: crypto.randomUUID(), type: 'sub' },
   ]);
 
   const addFxSlot = useCallback((type: FxType) => {
@@ -165,6 +166,9 @@ export default function App() {
         break;
       case 'saturate2':
         updateParams({ saturate2Enabled: false });
+        break;
+      case 'sub':
+        updateParams({ subEnabled: false });
         break;
     }
   }, [fxSlots, params.peqInstances, updateParams]);
@@ -316,6 +320,27 @@ export default function App() {
               onChange={(v) => updateParams({ saturate2Tilt: v })}
               color={meta.color}
               displayValue={`${((params.saturate2Tilt - 0.5) * 100).toFixed(0)}`}
+            />
+          </EffectModule>
+        );
+
+      case 'sub':
+        return (
+          <EffectModule
+            key={slot.id}
+            title={meta.label}
+            color={meta.color}
+            enabled={params.subEnabled}
+            onToggle={() => updateParams({ subEnabled: !params.subEnabled })}
+            onRemove={() => removeFxSlot(slot.id)}
+            subtitle={retuneStatus?.lowEndLocked ? 'Locked' : 'Waiting'}
+          >
+            <Knob
+              label="Level"
+              value={params.subLevel}
+              onChange={(v) => updateParams({ subLevel: v })}
+              color={meta.color}
+              displayValue={`${Math.round(params.subLevel * 100)}%`}
             />
           </EffectModule>
         );
