@@ -896,6 +896,26 @@ export class PolyphonicRetuneCore {
     );
   }
 
+  getCorrectionBlend(note) {
+    if (note.state !== 'mapped') {
+      return 0;
+    }
+
+    const centsError = Math.abs(note.sourceMidi - note.targetMidi) * 100;
+    const deadbandCents = note.isLowEnd ? 16 : 18;
+    const fullCorrectionCents = note.isLowEnd ? 54 : 68;
+
+    if (centsError <= deadbandCents) {
+      return 0;
+    }
+    if (centsError >= fullCorrectionCents) {
+      return 1;
+    }
+
+    const normalized = (centsError - deadbandCents) / (fullCorrectionCents - deadbandCents);
+    return normalized * normalized * (3 - 2 * normalized);
+  }
+
   applySpectralRetune(real, imag) {
     const activeNotes = this.getActiveTonalNotes();
     const halfBins = this.tonalMagnitudes.length;
@@ -956,10 +976,22 @@ export class PolyphonicRetuneCore {
         continue;
       }
 
+      const correctionBlend = this.getCorrectionBlend(bestNote);
+      if (correctionBlend <= 1e-3) {
+        this.tonalTargetReal[bin] += sourceReal;
+        this.tonalTargetImag[bin] += sourceImag;
+        continue;
+      }
+
+      const effectiveTargetMidi = bestNote.sourceMidi + (bestNote.targetMidi - bestNote.sourceMidi) * correctionBlend;
       const sourceFreq = midiToFreq(bestNote.sourceMidi);
-      const targetFreq = midiToFreq(bestNote.targetMidi);
+      const targetFreq = midiToFreq(effectiveTargetMidi);
       const ratio = targetFreq / Math.max(sourceFreq, 1e-6);
-      const moveAmount = clamp(strengthBase * textureScalar * Math.min(1, bestScore * 1.5), 0, 1);
+      const moveAmount = clamp(
+        strengthBase * textureScalar * correctionBlend * Math.min(1, bestScore * 1.5),
+        0,
+        1,
+      );
       const stayAmount = 1 - moveAmount;
 
       this.tonalTargetReal[bin] += sourceReal * stayAmount;
@@ -1036,7 +1068,10 @@ export class PolyphonicRetuneCore {
     let strongestWeight = 0;
 
     for (const note of lowNotes) {
-      const targetMidi = note.state === 'mapped' ? note.targetMidi : note.sourceMidi;
+      const correctionBlend = this.getCorrectionBlend(note);
+      const targetMidi = note.state === 'mapped'
+        ? note.sourceMidi + (note.targetMidi - note.sourceMidi) * correctionBlend
+        : note.sourceMidi;
       const targetFreq = midiToFreq(targetMidi);
       const weight = clamp(note.energy / Math.max(totalEnergy, 1e-6), 0, 1) * note.confidence;
       if (weight > strongestWeight) {

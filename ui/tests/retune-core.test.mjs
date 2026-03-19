@@ -47,6 +47,7 @@ function renderSignal({ seconds = 1.4, params = {}, sampleAt }) {
   const outputEnergy = output.reduce((sum, sample) => sum + sample * sample, 0);
   return {
     core,
+    output,
     status: core.getStatus(),
     statuses,
     inputRms: Math.sqrt(inputEnergy / (totalBlocks * BLOCK_SIZE)),
@@ -56,6 +57,17 @@ function renderSignal({ seconds = 1.4, params = {}, sampleAt }) {
 
 function findNote(notes, predicate) {
   return notes.find(predicate);
+}
+
+function measureFrequencyAmplitude(samples, frequency) {
+  let real = 0;
+  let imag = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const phase = (2 * Math.PI * frequency * i) / SAMPLE_RATE;
+    real += samples[i] * Math.cos(phase);
+    imag -= samples[i] * Math.sin(phase);
+  }
+  return Math.hypot(real, imag) / samples.length;
 }
 
 test('normalizes legacy quantize params into retune params', () => {
@@ -193,4 +205,29 @@ test('noise stays low-confidence and near-unity ratio', () => {
 
   assert.ok(result.status.confidence < 0.2, `expected low confidence on noise, got ${result.status.confidence}`);
   assert.ok(Math.abs(result.status.smoothedRatio - 1) < 0.05, `expected near-unity ratio on noise, got ${result.status.smoothedRatio}`);
+});
+
+test('in-scale notes inside the correction window are not pulled hard to equal temperament', () => {
+  const targetFreq = 293.6647679174076; // D4
+  const sourceFreq = targetFreq * Math.pow(2, 14 / 1200);
+  const result = renderSignal({
+    params: {
+      retuneKey: 2,
+      retuneScale: 'minor',
+      retuneStrength: 1,
+      retuneTextureAmount: 0,
+      retuneSubReinforcement: 0,
+    },
+    sampleAt(sampleIndex) {
+      return Math.sin((2 * Math.PI * sourceFreq * sampleIndex) / SAMPLE_RATE) * 0.7;
+    },
+  });
+
+  const sourceAmplitude = measureFrequencyAmplitude(result.output.slice(Math.floor(result.output.length * 0.4)), sourceFreq);
+  const targetAmplitude = measureFrequencyAmplitude(result.output.slice(Math.floor(result.output.length * 0.4)), targetFreq);
+
+  assert.ok(
+    sourceAmplitude >= targetAmplitude * 0.9,
+    `expected in-scale note to stay near its original pitch window, got source=${sourceAmplitude} target=${targetAmplitude}`,
+  );
 });
