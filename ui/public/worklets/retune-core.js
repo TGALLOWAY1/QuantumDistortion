@@ -475,6 +475,27 @@ export class PolyphonicRetuneCore {
     return magnitudes[index] * (1 - frac) + magnitudes[index + 1] * frac;
   }
 
+  computeSpectralFlatness(magnitudes, minBin, maxBin) {
+    let logSum = 0;
+    let linearSum = 0;
+    let count = 0;
+
+    for (let bin = minBin; bin <= maxBin; bin++) {
+      const magnitude = Math.max(magnitudes[bin], 1e-12);
+      logSum += Math.log(magnitude);
+      linearSum += magnitude;
+      count++;
+    }
+
+    if (count === 0 || linearSum <= 0) {
+      return 1;
+    }
+
+    const geometricMean = Math.exp(logSum / count);
+    const arithmeticMean = linearSum / count;
+    return clamp(geometricMean / Math.max(arithmeticMean, 1e-12), 0, 1);
+  }
+
   detectCandidatesFromSpectrum(magnitudes, frameSize, options) {
     const {
       minMidi,
@@ -705,6 +726,12 @@ export class PolyphonicRetuneCore {
     this.transientBypassActive = this.params.retunePreserveTransients && fluxRatio > 0.55;
     this.transientMix = this.transientBypassActive ? 0.35 : 1.0;
     this.detectorEnv += (Math.sqrt(frameEnergy / this.tonalFrameSize) - this.detectorEnv) * 0.18;
+    const tonalFlatness = this.computeSpectralFlatness(
+      this.tonalMagnitudes,
+      2,
+      Math.min(this.tonalMagnitudes.length - 1, Math.floor(5000 * this.tonalFrameSize / this.sampleRate)),
+    );
+    const tonalTonality = clamp((0.82 - tonalFlatness) / 0.62, 0, 1);
 
     const tonalCandidates = this.detectCandidatesFromSpectrum(this.tonalMagnitudes, this.tonalFrameSize, {
       minMidi: 40,
@@ -714,6 +741,9 @@ export class PolyphonicRetuneCore {
       lowCutoffHz: 5000,
       isLowEnd: false,
     });
+    for (const candidate of tonalCandidates) {
+      candidate.confidence *= tonalTonality;
+    }
     this.updateTrackedNotes(tonalCandidates);
   }
 
@@ -735,6 +765,12 @@ export class PolyphonicRetuneCore {
     for (let bin = 0; bin < this.lowMagnitudes.length; bin++) {
       this.lowMagnitudes[bin] = Math.hypot(this.lowReal[bin], this.lowImag[bin]);
     }
+    const lowFlatness = this.computeSpectralFlatness(
+      this.lowMagnitudes,
+      2,
+      Math.min(this.lowMagnitudes.length - 1, Math.floor(320 * this.lowFrameSize / this.sampleRate)),
+    );
+    const lowTonality = clamp((0.9 - lowFlatness) / 0.7, 0, 1);
 
     const lowCandidates = this.detectCandidatesFromSpectrum(this.lowMagnitudes, this.lowFrameSize, {
       minMidi: 28,
@@ -744,6 +780,9 @@ export class PolyphonicRetuneCore {
       lowCutoffHz: 320,
       isLowEnd: true,
     });
+    for (const candidate of lowCandidates) {
+      candidate.confidence *= lowTonality;
+    }
     this.updateTrackedNotes(lowCandidates);
   }
 
