@@ -4,13 +4,15 @@ import type { FxType } from '../audio/engine';
 
 interface AddFxButtonProps {
   onAdd: (type: FxType) => void;
+  availableTypes: FxType[];
 }
 
 const FX_TYPES = Object.keys(FX_CATALOG) as FxType[];
 
-export function AddFxButton({ onAdd }: AddFxButtonProps) {
+export function AddFxButton({ onAdd, availableTypes }: AddFxButtonProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const visibleTypes = availableTypes.length > 0 ? availableTypes : FX_TYPES;
 
   // Close on outside click
   useEffect(() => {
@@ -27,19 +29,24 @@ export function AddFxButton({ onAdd }: AddFxButtonProps) {
   return (
     <div ref={ref} className="relative flex-shrink-0">
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          if (availableTypes.length > 0) setOpen(!open);
+        }}
+        disabled={availableTypes.length === 0}
         className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border
-          hover:border-text-dim hover:bg-surface-2/50 transition-colors cursor-pointer"
+          hover:border-text-dim hover:bg-surface-2/50 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
         style={{ minWidth: 80, minHeight: 140 }}
         title="Add effect module"
       >
         <span className="text-2xl text-text-dim">+</span>
-        <span className="text-[10px] text-text-dim mt-1">Add FX</span>
+        <span className="text-[10px] text-text-dim mt-1">
+          {availableTypes.length > 0 ? 'Show FX' : 'All Shown'}
+        </span>
       </button>
 
       {open && (
         <div className="absolute bottom-full left-0 mb-2 bg-surface-2 border border-border rounded-lg shadow-xl z-50 py-1 min-w-[140px]">
-          {FX_TYPES.map((type) => {
+          {visibleTypes.map((type) => {
             const meta = FX_CATALOG[type];
             return (
               <button

@@ -5,9 +5,13 @@ import { SpectrumAnalyzer } from './components/SpectrumAnalyzer';
 import { EffectModule } from './components/EffectModule';
 import { Knob } from './components/Knob';
 import { AddFxButton } from './components/AddFxButton';
+import { RetuneModule } from './components/RetuneModule';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { FX_CATALOG } from './audio/engine';
 import type { EQBand, FilterType, FxSlot, FxType, EngineParams, PeqInstance } from './audio/engine';
+
+const FX_ORDER: FxType[] = ['peq', 'saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2'];
+const SINGLETON_FX: FxType[] = ['saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2'];
 
 // Electron API type
 declare global {
@@ -86,6 +90,7 @@ export default function App() {
     duration,
     currentTime,
     params,
+    retuneStatus,
     init,
     loadFile,
     togglePlay,
@@ -101,14 +106,17 @@ export default function App() {
   const [selectedBand, setSelectedBand] = useState<number | null>(null);
   const [showDevPanel, setShowDevPanel] = useState(false);
 
-  // --- Dynamic FX slots (default: Saturate → Quantize → Saturate 2) ---
+  // --- Dynamic FX slots (default: Saturate → Retune → Saturate 2) ---
   const [fxSlots, setFxSlots] = useState<FxSlot[]>([
     { id: crypto.randomUUID(), type: 'saturate' },
-    { id: crypto.randomUUID(), type: 'quantize' },
+    { id: crypto.randomUUID(), type: 'retune' },
     { id: crypto.randomUUID(), type: 'saturate2' },
   ]);
 
   const addFxSlot = useCallback((type: FxType) => {
+    if (SINGLETON_FX.includes(type) && fxSlots.some(slot => slot.type === type)) {
+      return;
+    }
     const newId = crypto.randomUUID();
     setFxSlots(prev => [...prev, { id: newId, type }]);
     if (type === 'peq') {
@@ -117,21 +125,57 @@ export default function App() {
           id: newId,
           enabled: true,
           mode: 'cut',
-          key: params.quantizeKey,
-          scale: params.quantizeScale,
+          key: params.retuneKey,
+          scale: params.retuneScale,
           amount: 0.5,
           q: 5.0,
         }],
       });
     }
-  }, [params.peqInstances, params.quantizeKey, params.quantizeScale, updateParams]);
+  }, [fxSlots, params.peqInstances, params.retuneKey, params.retuneScale, updateParams]);
 
   const removeFxSlot = useCallback((id: string) => {
+    const slot = fxSlots.find(s => s.id === id);
+    if (!slot) return;
+
     setFxSlots(prev => prev.filter(s => s.id !== id));
-    updateParams({
-      peqInstances: params.peqInstances.filter(inst => inst.id !== id),
-    });
-  }, [params.peqInstances, updateParams]);
+
+    if (slot.type === 'peq') {
+      updateParams({
+        peqInstances: params.peqInstances.filter(inst => inst.id !== id),
+      });
+      return;
+    }
+
+    switch (slot.type) {
+      case 'saturate':
+        updateParams({ saturateEnabled: false });
+        break;
+      case 'retune':
+        updateParams({ retuneEnabled: false });
+        break;
+      case 'delay':
+        updateParams({ delayEnabled: false });
+        break;
+      case 'modulate':
+        updateParams({ modEnabled: false });
+        break;
+      case 'lofi':
+        updateParams({ lofiEnabled: false });
+        break;
+      case 'saturate2':
+        updateParams({ saturate2Enabled: false });
+        break;
+    }
+  }, [fxSlots, params.peqInstances, updateParams]);
+
+  const orderedFxSlots = [...fxSlots].sort(
+    (a, b) => FX_ORDER.indexOf(a.type) - FX_ORDER.indexOf(b.type)
+  );
+
+  const availableFxTypes = (Object.keys(FX_CATALOG) as FxType[]).filter((type) => (
+    type === 'peq' || !orderedFxSlots.some((slot) => slot.type === type)
+  ));
 
   // --- Keyboard shortcuts ---
   useEffect(() => {
@@ -276,111 +320,17 @@ export default function App() {
           </EffectModule>
         );
 
-      case 'quantize':
-        {
-        const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-        const scaleIntervals: Record<string, number[]> = {
-          major: [0, 2, 4, 5, 7, 9, 11],
-          minor: [0, 2, 3, 5, 7, 8, 10],
-          pentatonic: [0, 2, 4, 7, 9],
-          dorian: [0, 2, 3, 5, 7, 9, 10],
-          mixolydian: [0, 2, 4, 5, 7, 9, 10],
-          harmonic_minor: [0, 2, 3, 5, 7, 8, 11],
-        };
-        const currentScale = scaleIntervals[params.quantizeScale] ?? scaleIntervals.major;
-        const scaleNoteCount = currentScale.length;
-        const subSources = ['root', 'manual', 'scale_degree'] as const;
-        const subSourceIndex = subSources.indexOf(params.quantizeSubSource);
-        const scaleDegreeMax = Math.max(0, scaleNoteCount - 1);
-        const subDegreeDisplay = `Deg ${Math.round(params.quantizeSubDegree) + 1}`;
-        // For manual mode: show the actual note name from the scale
-        const manualNoteIndex = Math.max(0, Math.min(scaleDegreeMax, Math.round(params.quantizeSubNote)));
-        const manualNoteName = noteNames[(params.quantizeKey + currentScale[manualNoteIndex]) % 12];
+      case 'retune':
         return (
-          <EffectModule
+          <RetuneModule
             key={slot.id}
-            title={meta.label}
             color={meta.color}
-            enabled={params.quantizeEnabled}
-            onToggle={() => updateParams({ quantizeEnabled: !params.quantizeEnabled })}
+            params={params}
+            status={retuneStatus}
+            updateParams={updateParams}
             onRemove={() => removeFxSlot(slot.id)}
-            subtitle={params.quantizeScale}
-            subtitleOptions={['major', 'minor', 'pentatonic', 'dorian', 'mixolydian', 'harmonic_minor']}
-            onSubtitleChange={(v) => updateParams({ quantizeScale: v })}
-          >
-            <Knob
-              label="Strength"
-              value={params.quantizeStrength}
-              onChange={(v) => updateParams({ quantizeStrength: v })}
-              color={meta.color}
-              displayValue={`${Math.round(params.quantizeStrength * 100)}%`}
-            />
-            <Knob
-              label="Sub"
-              value={params.quantizeSubEnabled ? 1 : 0}
-              onChange={(v) => updateParams({ quantizeSubEnabled: Math.round(v) >= 1 })}
-              color={meta.color}
-              min={0}
-              max={1}
-              displayValue={params.quantizeSubEnabled ? 'On' : 'Off'}
-            />
-            <Knob
-              label="Key"
-              value={params.quantizeKey}
-              onChange={(v) => updateParams({ quantizeKey: Math.round(v) })}
-              color={meta.color}
-              min={0}
-              max={11}
-              displayValue={noteNames[Math.round(params.quantizeKey)]}
-            />
-            <Knob
-              label="Sub Src"
-              value={subSourceIndex < 0 ? 0 : subSourceIndex}
-              onChange={(v) => updateParams({ quantizeSubSource: subSources[Math.max(0, Math.min(subSources.length - 1, Math.round(v)))] })}
-              color={meta.color}
-              min={0}
-              max={2}
-              displayValue={params.quantizeSubSource === 'scale_degree' ? 'Degree' : params.quantizeSubSource}
-            />
-            <Knob
-              label={params.quantizeSubSource === 'scale_degree' ? 'Degree' : 'Sub Note'}
-              value={params.quantizeSubSource === 'scale_degree' ? params.quantizeSubDegree : params.quantizeSubNote}
-              onChange={(v) => (
-                params.quantizeSubSource === 'scale_degree'
-                  ? updateParams({ quantizeSubDegree: Math.round(v) })
-                  : updateParams({ quantizeSubNote: Math.round(v) })
-              )}
-              color={meta.color}
-              min={0}
-              max={scaleDegreeMax}
-              displayValue={params.quantizeSubSource === 'scale_degree' ? subDegreeDisplay : manualNoteName}
-            />
-            <Knob
-              label="Sub Oct"
-              value={params.quantizeSubOctave}
-              onChange={(v) => updateParams({ quantizeSubOctave: Math.round(v) })}
-              color={meta.color}
-              min={0}
-              max={4}
-              displayValue={`Oct ${Math.round(params.quantizeSubOctave)}`}
-            />
-            <Knob
-              label="Sub Lvl"
-              value={params.quantizeSubLevel}
-              onChange={(v) => updateParams({ quantizeSubLevel: v })}
-              color={meta.color}
-              displayValue={`${Math.round(params.quantizeSubLevel * 100)}%`}
-            />
-            <Knob
-              label="Air"
-              value={params.quantizeAirMix}
-              onChange={(v) => updateParams({ quantizeAirMix: v })}
-              color={meta.color}
-              displayValue={`${Math.round(params.quantizeAirMix * 100)}%`}
-            />
-          </EffectModule>
+          />
         );
-        }
 
       case 'delay':
         return (
@@ -601,8 +551,8 @@ export default function App() {
 
       {/* Effect Modules Row */}
       <div className="flex gap-2 px-2 py-3 overflow-x-auto items-start">
-        {fxSlots.map(slot => renderFxSlot(slot))}
-        <AddFxButton onAdd={addFxSlot} />
+        {orderedFxSlots.map(slot => renderFxSlot(slot))}
+        <AddFxButton onAdd={addFxSlot} availableTypes={availableFxTypes} />
         <OutputModule params={params} updateParams={updateParams} />
       </div>
     </div>

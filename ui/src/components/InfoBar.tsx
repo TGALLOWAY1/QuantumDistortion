@@ -75,7 +75,7 @@ export function InfoBar({ selectedBand, eqBands, onShapeChange }: InfoBarProps) 
               disabled={selectedBand === null}
               className={`w-9 h-7 rounded flex items-center justify-center border transition-colors ${
                 isActive
-                  ? 'bg-accent-quantize/20 border-accent-quantize/50 text-accent-quantize'
+                  ? 'bg-accent-retune/20 border-accent-retune/50 text-accent-retune'
                   : 'bg-surface-2 border-border text-text-dim hover:text-text-primary hover:border-text-dim'
               } ${selectedBand === null ? 'opacity-30 cursor-not-allowed' : ''}`}
               title={FILTER_LABELS[shape]}

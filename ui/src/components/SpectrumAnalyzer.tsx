@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import type { EQBand } from '../audio/engine';
 
 interface SpectrumAnalyzerProps {
@@ -80,8 +80,9 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
   const animRef = useRef<number>(0);
   const draggingBand = useRef<number | null>(null);
   const hoverBand = useRef<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const draw = useCallback(() => {
+  const drawFrame = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
@@ -243,14 +244,17 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
       const x = freqToX(FREQ_VALUES[i], width);
       ctx.fillText(String(FREQ_LABELS[i]), x, height - 4);
     }
-
-    animRef.current = requestAnimationFrame(draw);
   }, [analyser, eqBands, width, height]);
 
   useEffect(() => {
-    animRef.current = requestAnimationFrame(draw);
+    const render = () => {
+      drawFrame();
+      animRef.current = requestAnimationFrame(render);
+    };
+
+    animRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animRef.current);
-  }, [draw]);
+  }, [drawFrame]);
 
   // Hit testing for band nodes
   const findBandAt = useCallback((clientX: number, clientY: number): number | null => {
@@ -273,6 +277,7 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
     const idx = findBandAt(e.clientX, e.clientY);
     if (idx !== null) {
       draggingBand.current = idx;
+      setIsDragging(true);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     }
   }, [findBandAt]);
@@ -294,17 +299,22 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
 
   const onPointerUp = useCallback(() => {
     draggingBand.current = null;
+    setIsDragging(false);
   }, []);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{ width, height, cursor: draggingBand.current !== null ? 'grabbing' : 'crosshair' }}
+      style={{ width, height, cursor: isDragging ? 'grabbing' : 'crosshair' }}
       className="block rounded-lg"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerLeave={() => { hoverBand.current = null; }}
+      onPointerLeave={() => {
+        hoverBand.current = null;
+        draggingBand.current = null;
+        setIsDragging(false);
+      }}
     />
   );
 }
