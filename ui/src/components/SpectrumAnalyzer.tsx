@@ -1,20 +1,17 @@
-import { useRef, useEffect, useCallback } from 'react';
-import type { EQBand } from '../audio/engine';
-
-interface QuantizeBandInfo {
-  enabled: boolean;
-  key: number;
-  scale: string;
-  strength: number;
-}
+import { useRef, useEffect, useCallback, useState } from 'react';
+import type { EQBand, RetuneStatus } from '../audio/engine';
+import { formatMidiNote, midiToFreq, NOTE_NAMES } from '../audio/retune';
 
 interface SpectrumAnalyzerProps {
   analyser: AnalyserNode | null;
   eqBands: EQBand[];
+  retuneStatus: RetuneStatus | null;
+  retuneEnabled: boolean;
+  retuneKey: number;
+  retuneScale: string;
   onBandChange: (index: number, band: Partial<EQBand>) => void;
   width: number;
   height: number;
-  quantizeBands?: QuantizeBandInfo;
 }
 
 // Frequency label positions
@@ -23,6 +20,11 @@ const FREQ_VALUES = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
 
 // Band colors matching the effect module accents
 const BAND_COLORS = ['#c45e3e', '#4a6fa5', '#4ec48a', '#8a5ec4', '#3eafc4'];
+const RETUNE_STATE_COLORS = {
+  mapped: '#4ec48a',
+  preserved: '#8b90ad',
+  muted: '#d96b6b',
+} as const;
 
 function freqToX(freq: number, width: number): number {
   const minLog = Math.log10(20);
@@ -44,6 +46,35 @@ function gainToY(gain: number, height: number): number {
 
 function yToGain(y: number, height: number): number {
   return -((y - height / 2) / (height / 2)) * 24;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+function formatKeyLabel(key: number): string {
+  return NOTE_NAMES[((Math.round(key) % 12) + 12) % 12];
 }
 
 /** Compute approximate EQ response contribution for a single band at a given frequency */
@@ -83,28 +114,24 @@ function bandResponse(band: EQBand, freq: number): number {
   }
 }
 
-// Scale intervals for drawing quantize band lines
-const SCALE_INTERVALS: Record<string, number[]> = {
-  major: [0, 2, 4, 5, 7, 9, 11],
-  minor: [0, 2, 3, 5, 7, 8, 10],
-  pentatonic: [0, 2, 4, 7, 9],
-  dorian: [0, 2, 3, 5, 7, 9, 10],
-  mixolydian: [0, 2, 4, 5, 7, 9, 10],
-  harmonic_minor: [0, 2, 3, 5, 7, 8, 11],
-  chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-};
-
-// Quantize band boundaries (frequencies outside sub and air are quantized)
-const QUANTIZE_SUB_HZ = 110;
-const QUANTIZE_AIR_HZ = 5000;
-
-export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, height, quantizeBands }: SpectrumAnalyzerProps) {
+export function SpectrumAnalyzer({
+  analyser,
+  eqBands,
+  retuneStatus,
+  retuneEnabled,
+  retuneKey,
+  retuneScale,
+  onBandChange,
+  width,
+  height,
+}: SpectrumAnalyzerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
   const draggingBand = useRef<number | null>(null);
   const hoverBand = useRef<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const draw = useCallback(() => {
+  const drawFrame = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d')!;
@@ -258,51 +285,6 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
       ctx.fill();
     }
 
-    // --- Quantize band lines ---
-    if (quantizeBands && quantizeBands.enabled && quantizeBands.strength > 0) {
-      const scale = SCALE_INTERVALS[quantizeBands.scale] || SCALE_INTERVALS.major;
-      const key = quantizeBands.key;
-      const alpha = Math.min(0.6, quantizeBands.strength * 0.6);
-
-      // Draw vertical lines for each scale note in the body range (between sub and air)
-      for (let octave = 1; octave <= 7; octave++) {
-        for (const interval of scale) {
-          const midi = (octave + 1) * 12 + ((key + interval) % 12);
-          const freq = 440 * Math.pow(2, (midi - 69) / 12);
-
-          // Only draw in the quantize body range (between sub cutoff and air cutoff)
-          if (freq < QUANTIZE_SUB_HZ || freq > QUANTIZE_AIR_HZ) continue;
-          if (freq < 20 || freq > 20000) continue;
-
-          const x = freqToX(freq, width);
-          const isRoot = interval === 0;
-
-          ctx.beginPath();
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, height);
-          ctx.strokeStyle = isRoot
-            ? `rgba(78, 196, 138, ${alpha})`
-            : `rgba(78, 196, 138, ${alpha * 0.4})`;
-          ctx.lineWidth = isRoot ? 1.5 : 0.5;
-          ctx.stroke();
-        }
-      }
-
-      // Draw subtle boundary indicators for sub and air cutoffs
-      const subX = freqToX(QUANTIZE_SUB_HZ, width);
-      const airX = freqToX(QUANTIZE_AIR_HZ, width);
-      ctx.setLineDash([4, 4]);
-      for (const bx of [subX, airX]) {
-        ctx.beginPath();
-        ctx.moveTo(bx, 0);
-        ctx.lineTo(bx, height);
-        ctx.strokeStyle = `rgba(78, 196, 138, 0.25)`;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-    }
-
     // --- Frequency labels ---
     ctx.fillStyle = '#555570';
     ctx.font = '10px Inter, sans-serif';
@@ -312,13 +294,101 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
       ctx.fillText(String(FREQ_LABELS[i]), x, height - 4);
     }
 
-    animRef.current = requestAnimationFrame(draw);
-  }, [analyser, eqBands, width, height, quantizeBands]);
+    if (retuneEnabled) {
+      const overlayNotes = [...(retuneStatus?.notes ?? [])]
+        .sort((a, b) => b.energy - a.energy)
+        .slice(0, 4);
+      const overlayHeight = 42 + overlayNotes.length * 18;
+      const overlayWidth = width - 24;
+
+      ctx.save();
+      drawRoundedRect(ctx, 12, 12, overlayWidth, overlayHeight, 12);
+      const overlayGradient = ctx.createLinearGradient(12, 12, 12, 12 + overlayHeight);
+      overlayGradient.addColorStop(0, 'rgba(13, 13, 26, 0.9)');
+      overlayGradient.addColorStop(1, 'rgba(20, 20, 43, 0.76)');
+      ctx.fillStyle = overlayGradient;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(78, 196, 138, 0.22)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.textAlign = 'left';
+      ctx.font = '11px Inter, sans-serif';
+      ctx.fillStyle = '#e8e8f0';
+      const stateLabel = !retuneStatus
+        ? 'Waiting'
+        : retuneStatus.overloaded
+          ? 'Overloaded'
+          : retuneStatus.noteCount > 0
+            ? 'Tracking'
+            : 'Listening';
+      ctx.fillText(`RETUNE ${formatKeyLabel(retuneKey)} ${retuneScale.replace('_', ' ')} · ${stateLabel}`, 24, 31);
+
+      ctx.font = '10px Inter, sans-serif';
+      ctx.fillStyle = '#8888a8';
+      const meta = [
+        `${retuneStatus?.noteCount ?? 0} groups`,
+        retuneStatus ? `${Math.round(retuneStatus.confidence * 100)}% conf` : 'no lock',
+        retuneStatus?.lowEndLocked ? 'low locked' : 'low floating',
+      ];
+      if (retuneStatus?.transientBypassActive) {
+        meta.push('attack hold');
+      }
+      ctx.fillText(meta.join(' · '), 24, 47);
+
+      overlayNotes.forEach((note, index) => {
+        const sourceX = clamp(freqToX(midiToFreq(note.sourceMidi), width), 90, width - 24);
+        const targetX = clamp(freqToX(midiToFreq(note.targetMidi), width), 90, width - 24);
+        const y = 67 + index * 18;
+        const color = RETUNE_STATE_COLORS[note.state];
+        const label = note.state === 'mapped'
+          ? `${formatMidiNote(note.sourceMidi)} → ${formatMidiNote(note.targetMidi)}`
+          : `${formatMidiNote(note.sourceMidi)} ${note.state}`;
+
+        ctx.strokeStyle = `${color}cc`;
+        ctx.lineWidth = note.isLowEnd ? 2.2 : 1.4;
+        ctx.beginPath();
+        ctx.moveTo(sourceX, y);
+        ctx.lineTo(targetX, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#0d0d1a';
+        ctx.beginPath();
+        ctx.arc(sourceX, y, 3.5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(targetX, y, 4.5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+
+        const chipText = note.isLowEnd ? `${label} · LOW` : label;
+        ctx.font = '10px Inter, sans-serif';
+        const chipWidth = ctx.measureText(chipText).width + 14;
+        const chipX = clamp((sourceX + targetX) / 2 - chipWidth / 2, 96, width - chipWidth - 18);
+        drawRoundedRect(ctx, chipX, y - 10, chipWidth, 16, 8);
+        ctx.fillStyle = 'rgba(20, 20, 43, 0.94)';
+        ctx.fill();
+        ctx.strokeStyle = `${color}55`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = note.state === 'muted' ? '#f3b2b2' : '#d7d9e5';
+        ctx.fillText(chipText, chipX + 7, y + 4);
+      });
+      ctx.restore();
+    }
+  }, [analyser, eqBands, retuneEnabled, retuneKey, retuneScale, retuneStatus, width, height]);
 
   useEffect(() => {
-    animRef.current = requestAnimationFrame(draw);
+    const render = () => {
+      drawFrame();
+      animRef.current = requestAnimationFrame(render);
+    };
+
+    animRef.current = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animRef.current);
-  }, [draw]);
+  }, [drawFrame]);
 
   // Hit testing for band nodes
   const findBandAt = useCallback((clientX: number, clientY: number): number | null => {
@@ -341,6 +411,7 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
     const idx = findBandAt(e.clientX, e.clientY);
     if (idx !== null) {
       draggingBand.current = idx;
+      setIsDragging(true);
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     }
   }, [findBandAt]);
@@ -362,17 +433,22 @@ export function SpectrumAnalyzer({ analyser, eqBands, onBandChange, width, heigh
 
   const onPointerUp = useCallback(() => {
     draggingBand.current = null;
+    setIsDragging(false);
   }, []);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{ width, height, cursor: draggingBand.current !== null ? 'grabbing' : 'crosshair' }}
+      style={{ width, height, cursor: isDragging ? 'grabbing' : 'crosshair' }}
       className="block rounded-lg"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
-      onPointerLeave={() => { hoverBand.current = null; }}
+      onPointerLeave={() => {
+        hoverBand.current = null;
+        draggingBand.current = null;
+        setIsDragging(false);
+      }}
     />
   );
 }

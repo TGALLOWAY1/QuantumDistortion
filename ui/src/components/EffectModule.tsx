@@ -10,6 +10,8 @@ interface EffectModuleProps {
   subtitleOptions?: string[];
   onSubtitleChange?: (val: string) => void;
   icon?: ReactNode;
+  minWidth?: number;
+  controlsClassName?: string;
   children: ReactNode;
 }
 
@@ -23,6 +25,8 @@ export function EffectModule({
   subtitleOptions,
   onSubtitleChange,
   icon,
+  minWidth = 180,
+  controlsClassName = 'flex items-end justify-center gap-4 px-3 py-3',
   children,
 }: EffectModuleProps) {
   return (
@@ -34,7 +38,7 @@ export function EffectModule({
           : '#14142b',
         opacity: enabled ? 1 : 0.5,
         border: `1px solid ${enabled ? color + '40' : '#2a2a4a'}`,
-        minWidth: 180,
+        minWidth,
       }}
     >
       {/* Header */}
@@ -103,7 +107,7 @@ export function EffectModule({
       )}
 
       {/* Controls */}
-      <div className="flex flex-wrap items-end justify-center gap-4 px-3 py-3">
+      <div className={controlsClassName}>
         {children}
       </div>
     </div>

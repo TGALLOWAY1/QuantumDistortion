@@ -5,9 +5,13 @@ import { SpectrumAnalyzer } from './components/SpectrumAnalyzer';
 import { EffectModule } from './components/EffectModule';
 import { Knob } from './components/Knob';
 import { AddFxButton } from './components/AddFxButton';
+import { RetuneModule } from './components/RetuneModule';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { FX_CATALOG } from './audio/engine';
 import type { EQBand, FilterType, FxSlot, FxType, EngineParams, PeqInstance } from './audio/engine';
+
+const FX_ORDER: FxType[] = ['peq', 'saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2', 'sub'];
+const SINGLETON_FX: FxType[] = ['saturate', 'retune', 'delay', 'modulate', 'lofi', 'saturate2', 'sub'];
 
 // Electron API type
 declare global {
@@ -40,18 +44,22 @@ function OutputModule({ params, updateParams }: {
       </div>
       <div className="flex items-end justify-center gap-4 px-3 py-3 mt-auto">
         <Knob
-          label="Sub Lvl"
-          value={params.quantizeSubLevel}
-          onChange={(v) => updateParams({ quantizeSubLevel: v })}
+          label="Low"
+          value={params.lowGain}
+          onChange={(v) => updateParams({ lowGain: v })}
           color="#c45e3e"
-          displayValue={`${Math.round(params.quantizeSubLevel * 100)}%`}
+          min={0}
+          max={2}
+          displayValue={`${(params.lowGain * 100).toFixed(0)}%`}
         />
         <Knob
-          label="Air"
-          value={params.quantizeAirMix}
-          onChange={(v) => updateParams({ quantizeAirMix: v })}
+          label="High"
+          value={params.highGain}
+          onChange={(v) => updateParams({ highGain: v })}
           color="#8ab4c4"
-          displayValue={`${Math.round(params.quantizeAirMix * 100)}%`}
+          min={0}
+          max={2}
+          displayValue={`${(params.highGain * 100).toFixed(0)}%`}
         />
         <Knob
           label="Dry/Wet"
@@ -82,6 +90,7 @@ export default function App() {
     duration,
     currentTime,
     params,
+    retuneStatus,
     init,
     loadFile,
     togglePlay,
@@ -97,14 +106,18 @@ export default function App() {
   const [selectedBand, setSelectedBand] = useState<number | null>(null);
   const [showDevPanel, setShowDevPanel] = useState(false);
 
-  // --- Dynamic FX slots (default: Saturate → Quantize → Saturate 2) ---
+  // --- Dynamic FX slots (default: Saturate → Retune → Saturate 2) ---
   const [fxSlots, setFxSlots] = useState<FxSlot[]>([
     { id: crypto.randomUUID(), type: 'saturate' },
-    { id: crypto.randomUUID(), type: 'quantize' },
+    { id: crypto.randomUUID(), type: 'retune' },
     { id: crypto.randomUUID(), type: 'saturate2' },
+    { id: crypto.randomUUID(), type: 'sub' },
   ]);
 
   const addFxSlot = useCallback((type: FxType) => {
+    if (SINGLETON_FX.includes(type) && fxSlots.some(slot => slot.type === type)) {
+      return;
+    }
     const newId = crypto.randomUUID();
     setFxSlots(prev => [...prev, { id: newId, type }]);
     if (type === 'peq') {
@@ -113,21 +126,60 @@ export default function App() {
           id: newId,
           enabled: true,
           mode: 'cut',
-          key: params.quantizeKey,
-          scale: params.quantizeScale,
+          key: params.retuneKey,
+          scale: params.retuneScale,
           amount: 0.5,
           q: 5.0,
         }],
       });
     }
-  }, [params.peqInstances, params.quantizeKey, params.quantizeScale, updateParams]);
+  }, [fxSlots, params.peqInstances, params.retuneKey, params.retuneScale, updateParams]);
 
   const removeFxSlot = useCallback((id: string) => {
+    const slot = fxSlots.find(s => s.id === id);
+    if (!slot) return;
+
     setFxSlots(prev => prev.filter(s => s.id !== id));
-    updateParams({
-      peqInstances: params.peqInstances.filter(inst => inst.id !== id),
-    });
-  }, [params.peqInstances, updateParams]);
+
+    if (slot.type === 'peq') {
+      updateParams({
+        peqInstances: params.peqInstances.filter(inst => inst.id !== id),
+      });
+      return;
+    }
+
+    switch (slot.type) {
+      case 'saturate':
+        updateParams({ saturateEnabled: false });
+        break;
+      case 'retune':
+        updateParams({ retuneEnabled: false });
+        break;
+      case 'delay':
+        updateParams({ delayEnabled: false });
+        break;
+      case 'modulate':
+        updateParams({ modEnabled: false });
+        break;
+      case 'lofi':
+        updateParams({ lofiEnabled: false });
+        break;
+      case 'saturate2':
+        updateParams({ saturate2Enabled: false });
+        break;
+      case 'sub':
+        updateParams({ subEnabled: false });
+        break;
+    }
+  }, [fxSlots, params.peqInstances, updateParams]);
+
+  const orderedFxSlots = [...fxSlots].sort(
+    (a, b) => FX_ORDER.indexOf(a.type) - FX_ORDER.indexOf(b.type)
+  );
+
+  const availableFxTypes = (Object.keys(FX_CATALOG) as FxType[]).filter((type) => (
+    type === 'peq' || !orderedFxSlots.some((slot) => slot.type === type)
+  ));
 
   // --- Keyboard shortcuts ---
   useEffect(() => {
@@ -272,125 +324,38 @@ export default function App() {
           </EffectModule>
         );
 
-      case 'quantize':
-        {
-        const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-        const scaleOptions = ['major', 'minor', 'pentatonic', 'dorian', 'mixolydian', 'harmonic_minor'];
-        const scaleIntervals: Record<string, number[]> = {
-          major: [0, 2, 4, 5, 7, 9, 11],
-          minor: [0, 2, 3, 5, 7, 8, 10],
-          pentatonic: [0, 2, 4, 7, 9],
-          dorian: [0, 2, 3, 5, 7, 9, 10],
-          mixolydian: [0, 2, 4, 5, 7, 9, 10],
-          harmonic_minor: [0, 2, 3, 5, 7, 8, 11],
-        };
-        const currentScale = scaleIntervals[params.quantizeScale] ?? scaleIntervals.major;
-        const scaleNoteCount = currentScale.length;
-        const subSources = ['root', 'manual', 'scale_degree'] as const;
-        const subSourceIndex = subSources.indexOf(params.quantizeSubSource);
-        const scaleDegreeMax = Math.max(0, scaleNoteCount - 1);
-        const subDegreeDisplay = `Deg ${Math.round(params.quantizeSubDegree) + 1}`;
-        const manualNoteIndex = Math.max(0, Math.min(scaleDegreeMax, Math.round(params.quantizeSubNote)));
-        const manualNoteName = noteNames[(params.quantizeKey + currentScale[manualNoteIndex]) % 12];
-
-        const selectStyle = {
-          background: '#1a1a2e',
-          border: `1px solid ${meta.color}60`,
-          color: '#e8e8f0',
-          borderRadius: 6,
-          padding: '4px 6px',
-          fontSize: 11,
-          outline: 'none',
-          cursor: 'pointer',
-          minWidth: 60,
-        };
-
+      case 'sub':
         return (
           <EffectModule
             key={slot.id}
             title={meta.label}
             color={meta.color}
-            enabled={params.quantizeEnabled}
-            onToggle={() => updateParams({ quantizeEnabled: !params.quantizeEnabled })}
+            enabled={params.subEnabled}
+            onToggle={() => updateParams({ subEnabled: !params.subEnabled })}
             onRemove={() => removeFxSlot(slot.id)}
+            subtitle={retuneStatus?.lowEndLocked ? 'Locked' : 'Waiting'}
           >
-            {/* Key and Scale dropdowns in a dedicated row */}
-            <div className="flex items-center justify-center gap-3 w-full -mb-2">
-              <div className="flex flex-col items-center gap-1">
-                <label className="text-[9px] uppercase tracking-wider text-text-dim">Key</label>
-                <select
-                  value={params.quantizeKey}
-                  onChange={(e) => updateParams({ quantizeKey: Number(e.target.value) })}
-                  style={selectStyle}
-                >
-                  {noteNames.map((name, i) => (
-                    <option key={i} value={i}>{name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col items-center gap-1">
-                <label className="text-[9px] uppercase tracking-wider text-text-dim">Scale</label>
-                <select
-                  value={params.quantizeScale}
-                  onChange={(e) => updateParams({ quantizeScale: e.target.value })}
-                  style={{ ...selectStyle, minWidth: 90 }}
-                >
-                  {scaleOptions.map((s) => (
-                    <option key={s} value={s}>{s.replace('_', ' ')}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
             <Knob
-              label="Strength"
-              value={params.quantizeStrength}
-              onChange={(v) => updateParams({ quantizeStrength: v })}
+              label="Level"
+              value={params.subLevel}
+              onChange={(v) => updateParams({ subLevel: v })}
               color={meta.color}
-              displayValue={`${Math.round(params.quantizeStrength * 100)}%`}
-            />
-            <Knob
-              label="Sub"
-              value={params.quantizeSubEnabled ? 1 : 0}
-              onChange={(v) => updateParams({ quantizeSubEnabled: Math.round(v) >= 1 })}
-              color={meta.color}
-              min={0}
-              max={1}
-              displayValue={params.quantizeSubEnabled ? 'On' : 'Off'}
-            />
-            <Knob
-              label="Sub Src"
-              value={subSourceIndex < 0 ? 0 : subSourceIndex}
-              onChange={(v) => updateParams({ quantizeSubSource: subSources[Math.max(0, Math.min(subSources.length - 1, Math.round(v)))] })}
-              color={meta.color}
-              min={0}
-              max={2}
-              displayValue={params.quantizeSubSource === 'scale_degree' ? 'Degree' : params.quantizeSubSource}
-            />
-            <Knob
-              label={params.quantizeSubSource === 'scale_degree' ? 'Degree' : 'Sub Note'}
-              value={params.quantizeSubSource === 'scale_degree' ? params.quantizeSubDegree : params.quantizeSubNote}
-              onChange={(v) => (
-                params.quantizeSubSource === 'scale_degree'
-                  ? updateParams({ quantizeSubDegree: Math.round(v) })
-                  : updateParams({ quantizeSubNote: Math.round(v) })
-              )}
-              color={meta.color}
-              min={0}
-              max={scaleDegreeMax}
-              displayValue={params.quantizeSubSource === 'scale_degree' ? subDegreeDisplay : manualNoteName}
-            />
-            <Knob
-              label="Sub Oct"
-              value={params.quantizeSubOctave}
-              onChange={(v) => updateParams({ quantizeSubOctave: Math.round(v) })}
-              color={meta.color}
-              min={0}
-              max={4}
-              displayValue={`Oct ${Math.round(params.quantizeSubOctave)}`}
+              displayValue={`${Math.round(params.subLevel * 100)}%`}
             />
           </EffectModule>
         );
-        }
+
+      case 'retune':
+        return (
+          <RetuneModule
+            key={slot.id}
+            color={meta.color}
+            params={params}
+            status={retuneStatus}
+            updateParams={updateParams}
+            onRemove={() => removeFxSlot(slot.id)}
+          />
+        );
 
       case 'delay':
         return (
@@ -572,15 +537,13 @@ export default function App() {
         <SpectrumAnalyzer
           analyser={engine?.getAnalyser() ?? null}
           eqBands={params.eqBands}
+          retuneStatus={retuneStatus}
+          retuneEnabled={params.retuneEnabled}
+          retuneKey={params.retuneKey}
+          retuneScale={params.retuneScale}
           onBandChange={handleBandChange}
           width={specWidth}
           height={specHeight}
-          quantizeBands={{
-            enabled: params.quantizeEnabled,
-            key: params.quantizeKey,
-            scale: params.quantizeScale,
-            strength: params.quantizeStrength,
-          }}
         />
       </div>
 
@@ -617,8 +580,8 @@ export default function App() {
 
       {/* Effect Modules Row */}
       <div className="flex gap-2 px-2 py-3 overflow-x-auto items-start">
-        {fxSlots.map(slot => renderFxSlot(slot))}
-        <AddFxButton onAdd={addFxSlot} />
+        {orderedFxSlots.map(slot => renderFxSlot(slot))}
+        <AddFxButton onAdd={addFxSlot} availableTypes={availableFxTypes} />
         <OutputModule params={params} updateParams={updateParams} />
       </div>
     </div>

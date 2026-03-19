@@ -10,6 +10,7 @@
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "vite build && electron-builder",
     "lint": "eslint .",
+    "test:retune-core": "node --test tests/retune-core.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

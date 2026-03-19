@@ -101,6 +101,78 @@ npm run electron:dev      # Development mode
 npm run electron:build    # Build production installer
 ```
 
+The Electron app is the main interactive surface for the current retune workflow. The Streamlit and CLI paths are still useful for prototype validation, but the polyphonic retune engine and note-routing UI live in the Electron app.
+
+## Using The Retune Module
+
+The `Retune` module is a polyphonic note-remapping stage. It listens for multiple note groups in the incoming audio, maps those groups to a musical target set, then resynthesizes the tonal content while preserving as much attack and texture as possible.
+
+### Basic Workflow
+
+1. Load audio in the Electron app and enable the `Retune` module.
+2. Set `Key` and `Scale` at the top of the module.
+3. Leave `Custom` off if you want standard musical behavior. In this mode the engine uses the selected key and scale directly, and the target mask stays hidden.
+4. Turn `Custom` on only when you want to build a custom note set. This reveals the target mask and `Out of Mask` behavior.
+5. If you want extra sub reinforcement, use the separate `Sub` module after retune. The sub is informed by the retune engine, but it is intentionally outside the retune block so it does not get saturated too early.
+
+### What The Spectrum Is Showing
+
+When retune is active, the spectrum is the primary feedback surface:
+
+- Active tonal groups are overlaid directly on the analyzer instead of being listed in a large status panel.
+- The overlay shows which note groups are being mapped, preserved, or muted.
+- The retune header still reports lightweight state such as tracking, confidence, low-end lock, and attack-preserve state.
+
+If the overlay shows unstable note movement, reduce correction pressure before assuming the detector is wrong.
+
+### Top Controls
+
+- `Key`: root note for the target scale or default target mask.
+- `Scale`: target scale family. Available scales are `major`, `minor`, `pentatonic`, `dorian`, `mixolydian`, `harmonic minor`, and `chromatic`.
+- `Custom`: reveals the target mask. Leave this off for normal scale-aware retuning.
+
+### Custom Target Mask
+
+When `Custom` is enabled:
+
+- Click note buttons to allow or disallow pitch classes.
+- `Reset To Scale` restores the mask to the currently selected key and scale.
+- `Out of Mask` controls what happens to notes outside the allowed target set:
+  - `Nearest`: remap to the closest allowed note.
+  - `Preserve`: keep the original note instead of forcing a move.
+  - `Mute`: suppress that tracked tonal group.
+
+Use `Preserve` when you want the retune engine to stay musical without flattening every non-scale color tone. Use `Mute` only for more aggressive sound-design cases.
+
+### Performance Controls
+
+- `Strength`: overall correction amount. Higher values push note groups more strongly toward their targets.
+- `Deadband`: tolerance around an in-scale note. Increase this if material already in key is still sounding over-corrected.
+- `Gate`: minimum confidence required before the engine actively retunes a note group. Increase this if you hear flutter, note bouncing, or false locks.
+- `Texture`: blends more of the original spectral detail back into the retuned result. Increase it if the result feels too clinical or hollow.
+- `Low Blend`: balance between the dedicated low-end retune lane and the original low-frequency body.
+- `Air`: amount of high-frequency air/noise retained above the retuned tonal body.
+
+### Toggles
+
+- `Preserve Attacks`: reduces retune strength during transients so attacks stay sharper and less smeared.
+- `Collapse Duplicates`: allows multiple source groups to collapse onto the same target pitch class. Leave this off if you want more separation between tracked notes.
+
+### Recommended Starting Points
+
+- Material already in key: lower `Strength`, raise `Deadband`, keep `Custom` off.
+- Chords and pads: keep `Preserve Attacks` on, start with moderate `Strength`, and avoid `Mute` unless you want obvious note removal.
+- Bass-heavy material: use moderate `Low Blend`, then bring in the separate `Sub` module only if the low end needs reinforcement.
+- Noisy or unstable sources: raise `Gate` so the engine preserves uncertain groups instead of bouncing between targets.
+
+### Troubleshooting
+
+- If the effect sounds too active even when the sample is already in the correct key, increase `Deadband` first.
+- If notes seem to bounce back and forth, increase `Gate` and reduce `Strength`.
+- If attacks smear or chatter, keep `Preserve Attacks` enabled.
+- If the output gets too synthetic, reduce `Strength`, increase `Texture`, and lower the `Sub` amount.
+- If the result feels thin in the highs, increase `Air`.
+
 ## Validation & Profiling
 
 ```bash

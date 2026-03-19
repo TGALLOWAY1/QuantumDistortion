@@ -33,8 +33,8 @@ export function Toolbar({
     <div className="flex items-center gap-3 px-4 py-2 bg-surface-1 border-b border-border">
       {/* Logo */}
       <div className="flex items-center gap-2 mr-2">
-        <div className="w-6 h-6 rounded bg-accent-quantize/20 flex items-center justify-center">
-          <span className="text-accent-quantize text-xs font-bold">Q</span>
+        <div className="w-6 h-6 rounded bg-accent-retune/20 flex items-center justify-center">
+          <span className="text-accent-retune text-xs font-bold">Q</span>
         </div>
         <span className="text-sm font-semibold tracking-wide text-text-primary">
           QUANTUM DISTORTION

@@ -2,6 +2,15 @@
  * Audio Engine - manages the Web Audio graph and AudioWorklet
  */
 
+import type {
+  RetuneLowEndMode,
+  RetuneMode,
+  RetuneOutOfMaskMode,
+  RetuneScale,
+  RetuneTrackedNote,
+} from './retune';
+import { buildScaleMask } from './retune';
+
 export type FilterType = 'peak' | 'lowshelf' | 'highshelf' | 'lowpass' | 'highpass';
 
 export interface EQBand {
@@ -11,7 +20,7 @@ export interface EQBand {
   type: FilterType;
 }
 
-export type FxType = 'saturate' | 'quantize' | 'delay' | 'modulate' | 'lofi' | 'saturate2' | 'peq';
+export type FxType = 'saturate' | 'retune' | 'delay' | 'modulate' | 'lofi' | 'saturate2' | 'sub' | 'peq';
 
 export interface PeqInstance {
   id: string;
@@ -28,13 +37,33 @@ export interface FxSlot {
   type: FxType;
 }
 
+export interface RetuneStatus {
+  backendName: string;
+  retuneEnabled: boolean;
+  voiced: boolean;
+  detectedPitch: number;
+  targetPitch: number;
+  targetRatio: number;
+  smoothedRatio: number;
+  confidence: number;
+  detectorEnv: number;
+  lowEndStrategy: string;
+  notes: RetuneTrackedNote[];
+  lowEndLocked: boolean;
+  transientBypassActive: boolean;
+  analysisLatencyMs: number;
+  overloaded: boolean;
+  noteCount: number;
+}
+
 export const FX_CATALOG: Record<FxType, { label: string; color: string }> = {
   saturate:  { label: 'Saturate',   color: '#c45e3e' },
-  quantize:  { label: 'Quantize',   color: '#4ec48a' },
+  retune:    { label: 'Retune',     color: '#4ec48a' },
   delay:     { label: 'Delay',      color: '#3eafc4' },
   modulate:  { label: 'Modulate',   color: '#8a5ec4' },
   lofi:      { label: 'Lo-Fi',      color: '#8a7e5e' },
   saturate2: { label: 'Saturate 2', color: '#d47a5e' },
+  sub:       { label: 'Sub',        color: '#6ea8ff' },
   peq:       { label: 'Param EQ',   color: '#5ec4b8' },
 };
 
@@ -53,17 +82,25 @@ export interface EngineParams {
   saturate2Drive: number;
   saturate2Tilt: number;
 
-  quantizeEnabled: boolean;
-  quantizeKey: number;
-  quantizeScale: string;
-  quantizeStrength: number;
-  quantizeSubEnabled: boolean;
-  quantizeSubSource: 'root' | 'manual' | 'scale_degree';
-  quantizeSubNote: number;
-  quantizeSubDegree: number;
-  quantizeSubOctave: number;
-  quantizeSubLevel: number;
-  quantizeAirMix: number;
+  retuneEnabled: boolean;
+  retuneMode: RetuneMode;
+  retuneKey: number;
+  retuneScale: RetuneScale;
+  retuneUseCustomMask: boolean;
+  retuneStrength: number;
+  retuneDeadbandCents: number;
+  retuneConfidenceGate: number;
+  retuneTargetMask: boolean[];
+  retuneOutOfMaskMode: RetuneOutOfMaskMode;
+  retunePreserveTransients: boolean;
+  retuneTextureAmount: number;
+  retuneLowEndMode: RetuneLowEndMode;
+  retuneLowEndBlend: number;
+  retuneCollapseDuplicates: boolean;
+  retuneAirMix: number;
+
+  subEnabled: boolean;
+  subLevel: number;
 
   lowGain: number;
   highGain: number;
@@ -103,17 +140,25 @@ export const DEFAULT_PARAMS: EngineParams = {
   saturate2Drive: 0.5,
   saturate2Tilt: 0.5,
 
-  quantizeEnabled: true,
-  quantizeKey: 0,
-  quantizeScale: 'major',
-  quantizeStrength: 1.0,
-  quantizeSubEnabled: true,
-  quantizeSubSource: 'root',
-  quantizeSubNote: 0,
-  quantizeSubDegree: 0,
-  quantizeSubOctave: 2,
-  quantizeSubLevel: 0.35,
-  quantizeAirMix: 1.0,
+  retuneEnabled: false,
+  retuneMode: 'polyphonic',
+  retuneKey: 0,
+  retuneScale: 'major',
+  retuneUseCustomMask: false,
+  retuneStrength: 0.7,
+  retuneDeadbandCents: 18,
+  retuneConfidenceGate: 0.22,
+  retuneTargetMask: buildScaleMask(0, 'major'),
+  retuneOutOfMaskMode: 'nearest',
+  retunePreserveTransients: true,
+  retuneTextureAmount: 0.2,
+  retuneLowEndMode: 'hybrid',
+  retuneLowEndBlend: 0.55,
+  retuneCollapseDuplicates: false,
+  retuneAirMix: 1.0,
+
+  subEnabled: true,
+  subLevel: 0.25,
 
   lowGain: 1.0,
   highGain: 1.0,
@@ -145,6 +190,7 @@ export const DEFAULT_PARAMS: EngineParams = {
 };
 
 export type AnalysisCallback = (samples: Float32Array) => void;
+export type RetuneStatusCallback = (status: RetuneStatus) => void;
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -154,6 +200,7 @@ export class AudioEngine {
   private audioBuffer: AudioBuffer | null = null;
   private isPlaying = false;
   private onAnalysis: AnalysisCallback | null = null;
+  private onRetuneStatus: RetuneStatusCallback | null = null;
   private startTime = 0;
   private startOffset = 0;
 
@@ -177,12 +224,18 @@ export class AudioEngine {
     this.workletNode.port.onmessage = (e) => {
       if (e.data.type === 'analysis' && this.onAnalysis) {
         this.onAnalysis(e.data.samples);
+      } else if (e.data.type === 'retune-status' && this.onRetuneStatus) {
+        this.onRetuneStatus(e.data.status as RetuneStatus);
       }
     };
   }
 
   setAnalysisCallback(cb: AnalysisCallback) {
     this.onAnalysis = cb;
+  }
+
+  setRetuneStatusCallback(cb: RetuneStatusCallback) {
+    this.onRetuneStatus = cb;
   }
 
   getAnalyser(): AnalyserNode | null {

@@ -1,22 +1,26 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { AudioEngine, DEFAULT_PARAMS } from '../audio/engine';
-import type { EngineParams } from '../audio/engine';
+import type { EngineParams, RetuneStatus } from '../audio/engine';
 
 export function useAudioEngine() {
   const engineRef = useRef<AudioEngine | null>(null);
+  const [engine, setEngine] = useState<AudioEngine | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [params, setParams] = useState<EngineParams>(DEFAULT_PARAMS);
+  const [retuneStatus, setRetuneStatus] = useState<RetuneStatus | null>(null);
   const animRef = useRef<number>(0);
 
   const init = useCallback(async () => {
     if (engineRef.current) return;
     const engine = new AudioEngine();
     await engine.init();
+    engine.setRetuneStatusCallback(setRetuneStatus);
     engineRef.current = engine;
+    setEngine(engine);
     setIsReady(true);
   }, []);
 
@@ -83,13 +87,14 @@ export function useAudioEngine() {
   }, [isPlaying]);
 
   return {
-    engine: engineRef.current,
+    engine,
     isReady,
     isPlaying,
     fileName,
     duration,
     currentTime,
     params,
+    retuneStatus,
     init,
     loadFile,
     play,

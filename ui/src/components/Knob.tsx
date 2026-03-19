@@ -132,11 +132,14 @@ export function Knob({
         onPointerUp={onPointerUp}
         onDoubleClick={onDoubleClick}
       />
-      {hovering && displayValue && (
-        <span className="text-[10px] text-text-primary tabular-nums">
-          {displayValue}
+      <div className="h-[14px] flex items-center justify-center">
+        <span
+          className="text-[10px] text-text-primary tabular-nums transition-opacity"
+          style={{ opacity: hovering && displayValue ? 1 : 0 }}
+        >
+          {displayValue ?? '\u00A0'}
         </span>
-      )}
+      </div>
       <span className="text-[10px] text-text-secondary tracking-wider uppercase">
         {label}
       </span>
