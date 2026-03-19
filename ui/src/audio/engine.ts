@@ -85,7 +85,10 @@ export interface EngineParams {
   retuneMode: RetuneMode;
   retuneKey: number;
   retuneScale: RetuneScale;
+  retuneUseCustomMask: boolean;
   retuneStrength: number;
+  retuneDeadbandCents: number;
+  retuneConfidenceGate: number;
   retuneTargetMask: boolean[];
   retuneOutOfMaskMode: RetuneOutOfMaskMode;
   retunePreserveTransients: boolean;
@@ -138,7 +141,10 @@ export const DEFAULT_PARAMS: EngineParams = {
   retuneMode: 'polyphonic',
   retuneKey: 0,
   retuneScale: 'major',
+  retuneUseCustomMask: false,
   retuneStrength: 0.7,
+  retuneDeadbandCents: 18,
+  retuneConfidenceGate: 0.22,
   retuneTargetMask: buildScaleMask(0, 'major'),
   retuneOutOfMaskMode: 'nearest',
   retunePreserveTransients: true,

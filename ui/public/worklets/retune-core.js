@@ -50,6 +50,8 @@ export const DEFAULT_RETUNE_PARAMS = {
   retuneKey: 0,
   retuneScale: 'major',
   retuneStrength: 0.7,
+  retuneDeadbandCents: 18,
+  retuneConfidenceGate: 0.22,
   retuneTargetMask: buildScaleMask(0, 'major'),
   retuneOutOfMaskMode: 'nearest',
   retunePreserveTransients: true,
@@ -137,6 +139,12 @@ export function normalizeRetuneParamPatch(patch, currentParams = DEFAULT_RETUNE_
 
   if (Object.prototype.hasOwnProperty.call(normalized, 'retuneSubReinforcement')) {
     normalized.retuneSubReinforcement = clamp(Number(normalized.retuneSubReinforcement) || 0, 0, 1);
+  }
+  if (Object.prototype.hasOwnProperty.call(normalized, 'retuneDeadbandCents')) {
+    normalized.retuneDeadbandCents = clamp(Number(normalized.retuneDeadbandCents) || 0, 0, 60);
+  }
+  if (Object.prototype.hasOwnProperty.call(normalized, 'retuneConfidenceGate')) {
+    normalized.retuneConfidenceGate = clamp(Number(normalized.retuneConfidenceGate) || 0, 0, 1);
   }
 
   return normalized;
@@ -743,7 +751,8 @@ export class PolyphonicRetuneCore {
     for (const note of this.trackedNotes) {
       const nextDecision = this.resolveTargetDecision(note.sourceMidi, occupiedPitchClasses);
       let { targetMidi, state } = this.applyTargetHysteresis(note, nextDecision, occupiedPitchClasses);
-      const confidenceFloor = note.isLowEnd ? 0.16 : 0.22;
+      const baseGate = this.params.retuneConfidenceGate ?? 0.22;
+      const confidenceFloor = note.isLowEnd ? Math.max(0.1, baseGate * 0.75) : baseGate;
       const eligibleForMapping = note.confidence >= confidenceFloor && (note.age >= 2 || note.targetLockFrames > 0);
 
       if (state === 'mapped' && !eligibleForMapping) {
@@ -902,8 +911,9 @@ export class PolyphonicRetuneCore {
     }
 
     const centsError = Math.abs(note.sourceMidi - note.targetMidi) * 100;
-    const deadbandCents = note.isLowEnd ? 16 : 18;
-    const fullCorrectionCents = note.isLowEnd ? 54 : 68;
+    const baseDeadband = this.params.retuneDeadbandCents ?? 18;
+    const deadbandCents = note.isLowEnd ? baseDeadband * 0.85 : baseDeadband;
+    const fullCorrectionCents = deadbandCents + (note.isLowEnd ? 38 : 50);
 
     if (centsError <= deadbandCents) {
       return 0;
