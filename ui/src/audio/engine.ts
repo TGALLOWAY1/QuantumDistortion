@@ -58,12 +58,12 @@ export interface RetuneStatus {
 
 export const FX_CATALOG: Record<FxType, { label: string; color: string }> = {
   saturate:  { label: 'Saturate',   color: '#c45e3e' },
-  retune:    { label: 'Retune',     color: '#4ec48a' },
+  retune:    { label: 'Retune',     color: '#4891ff' },
   delay:     { label: 'Delay',      color: '#3eafc4' },
   modulate:  { label: 'Modulate',   color: '#8a5ec4' },
   lofi:      { label: 'Lo-Fi',      color: '#8a7e5e' },
   saturate2: { label: 'Saturate 2', color: '#d47a5e' },
-  sub:       { label: 'Sub',        color: '#6ea8ff' },
+  sub:       { label: 'Sub',        color: '#34c7cf' },
   peq:       { label: 'Param EQ',   color: '#5ec4b8' },
 };
 
@@ -76,11 +76,15 @@ export interface EngineParams {
   saturateType: 'tape' | 'tube' | 'wavefold';
   saturateDrive: number;
   saturateTilt: number;
+  saturateSoftness: 'soft' | 'medium' | 'hard';
+  saturateMix: number;
 
   saturate2Enabled: boolean;
   saturate2Type: 'tape' | 'tube' | 'wavefold';
   saturate2Drive: number;
   saturate2Tilt: number;
+  saturate2Softness: 'soft' | 'medium' | 'hard';
+  saturate2Mix: number;
 
   retuneEnabled: boolean;
   retuneMode: RetuneMode;
@@ -101,9 +105,13 @@ export interface EngineParams {
 
   subEnabled: boolean;
   subLevel: number;
+  subRootNote: number;
+  subOctave: -2 | -1 | 0;
+  subWaveform: 'sine' | 'triangle' | 'rounded_square';
 
   lowGain: number;
   highGain: number;
+  outputLimiterType: 'transparent' | 'soft' | 'hard' | 'off';
 
   _devDriveRange: number;
 
@@ -134,11 +142,15 @@ export const DEFAULT_PARAMS: EngineParams = {
   saturateType: 'tape',
   saturateDrive: 0.3,
   saturateTilt: 0.5,
+  saturateSoftness: 'medium',
+  saturateMix: 0.8,
 
   saturate2Enabled: true,
   saturate2Type: 'tape',
   saturate2Drive: 0.5,
   saturate2Tilt: 0.5,
+  saturate2Softness: 'medium',
+  saturate2Mix: 0.75,
 
   retuneEnabled: false,
   retuneMode: 'polyphonic',
@@ -159,9 +171,13 @@ export const DEFAULT_PARAMS: EngineParams = {
 
   subEnabled: true,
   subLevel: 0.25,
+  subRootNote: 0,
+  subOctave: -1,
+  subWaveform: 'sine',
 
   lowGain: 1.0,
   highGain: 1.0,
+  outputLimiterType: 'transparent',
 
   _devDriveRange: 0.4,
 
