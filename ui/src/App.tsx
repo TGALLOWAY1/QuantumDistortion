@@ -36,22 +36,30 @@ function ModuleShell({
 }) {
   return (
     <div
-      className="flex flex-col rounded-xl overflow-hidden flex-shrink-0"
+      className="flex flex-col rounded-xl overflow-hidden flex-shrink-0 backdrop-blur-[1px]"
       style={{
-        background: `linear-gradient(180deg, ${color}16 0%, #14142b 100%)`,
-        border: `1px solid ${color}4a`,
+        background: `linear-gradient(180deg, #11182d 0%, #0f1324 100%)`,
+        border: `1px solid ${color}33`,
         minWidth,
         opacity: enabled ? 1 : 0.6,
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)',
       }}
     >
-      <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: `${color}30` }}>
-        {number && <span className="text-[10px]" style={{ color }}>{number}</span>}
+      <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: '#23314d' }}>
+        {number && (
+          <span
+            className="w-[18px] h-[18px] rounded-full text-[10px] font-semibold flex items-center justify-center"
+            style={{ background: `${color}2a`, color }}
+          >
+            {number}
+          </span>
+        )}
         <span className="text-xs font-semibold tracking-wider uppercase text-text-primary">{title}</span>
         <div className="flex-1" />
         <button
           onClick={onToggle}
-          className="w-4 h-4 rounded-full border-2"
-          style={{ borderColor: color, background: enabled ? color : 'transparent' }}
+          className="w-4 h-4 rounded-full border"
+          style={{ borderColor: color, background: enabled ? `${color}22` : 'transparent' }}
         />
       </div>
       <div className="px-3 py-3 flex flex-col gap-2">{children}</div>
@@ -138,7 +146,7 @@ export default function App() {
         />
       </div>
 
-      <div className="flex gap-2 px-2 py-3 overflow-x-auto items-start">
+      <div className="flex gap-2 px-2 py-3 overflow-x-auto items-stretch">
         <ModuleShell
           number="1"
           title="Primary Saturator"
@@ -198,7 +206,7 @@ export default function App() {
         </ModuleShell>
 
         <ModuleShell
-          title="Sub Generator"
+          title="Sub (Unquantized)"
           color="#34c7cf"
           enabled={params.subEnabled}
           onToggle={() => updateParams({ subEnabled: !params.subEnabled })}
@@ -218,12 +226,14 @@ export default function App() {
           </div>
         </ModuleShell>
 
-        <ModuleShell title="Output" color="#3eafc4" enabled={true} onToggle={() => undefined} minWidth={240}>
+        <ModuleShell title="Output" color="#3eafc4" enabled={true} onToggle={() => undefined} minWidth={260}>
           <div className="grid grid-cols-2 gap-2 justify-items-center">
             <Knob label="Low" value={params.lowGain} onChange={(v) => updateParams({ lowGain: v })} color="#d88b52" min={0} max={2} displayValue={`${(params.lowGain * 100).toFixed(0)}%`} />
             <Knob label="High" value={params.highGain} onChange={(v) => updateParams({ highGain: v })} color="#4891ff" min={0} max={2} displayValue={`${(params.highGain * 100).toFixed(0)}%`} />
             <Knob label="Dry/Wet" value={params.dryWet} onChange={(v) => updateParams({ dryWet: v })} color="#3eafc4" displayValue={`${Math.round(params.dryWet * 100)}%`} />
-            <Knob label="Gain" value={params.masterGain} onChange={(v) => updateParams({ masterGain: v })} color="#3eafc4" min={0} max={2} displayValue={`${(params.masterGain * 100).toFixed(0)}%`} />
+            <div className="flex flex-col items-center">
+              <Knob label="Gain" value={params.masterGain} onChange={(v) => updateParams({ masterGain: v })} color="#3eafc4" min={0} max={2} size={68} displayValue={`${(params.masterGain * 100).toFixed(0)}%`} />
+            </div>
           </div>
           <select value={params.outputLimiterType} onChange={(e) => updateParams({ outputLimiterType: e.target.value as 'transparent' | 'soft' | 'hard' | 'off' })} className="text-xs rounded bg-surface-2 border border-border px-2 py-1.5 text-text-primary mt-1">
             <option value="transparent">Transparent</option><option value="soft">Soft</option><option value="hard">Hard</option><option value="off">Off</option>

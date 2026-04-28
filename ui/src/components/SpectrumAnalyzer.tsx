@@ -149,7 +149,7 @@ export function SpectrumAnalyzer({
       ctx.fillText(String(gain), 28, gainToY(gain, height) - 4);
     });
 
-    const meterX = width - 22;
+    const meterX = width - 38;
     const meterY = 16;
     const meterW = 8;
     const meterH = height - 32;
@@ -159,6 +159,10 @@ export function SpectrumAnalyzer({
     ctx.strokeStyle = '#344062';
     ctx.strokeRect(meterX, meterY, meterW, meterH);
     ctx.strokeRect(meterX + 10, meterY, meterW, meterH);
+    ctx.fillStyle = '#e4e8f5';
+    ctx.font = '10px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('OUTPUT', meterX - 2, 12);
 
     let level = 0.35;
     if (analyser) {
@@ -176,6 +180,14 @@ export function SpectrumAnalyzer({
     ctx.fillStyle = grad;
     ctx.fillRect(meterX, meterY + meterH - fillH, meterW, fillH);
     ctx.fillRect(meterX + 10, meterY + meterH - fillH * 0.95, meterW, fillH * 0.95);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#7f89ac';
+    const meterTicks = [0, -6, -12, -18, -24, -36, -48, -60];
+    meterTicks.forEach((tick) => {
+      const y = meterY + ((-tick) / 60) * meterH;
+      ctx.fillText(String(tick), meterX + 22, y + 3);
+    });
   }, [analyser, eqBands, height, retuneBandColor, retuneBandEndHz, retuneBandStartHz, width]);
 
   useEffect(() => {
