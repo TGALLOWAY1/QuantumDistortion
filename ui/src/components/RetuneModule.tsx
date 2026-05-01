@@ -34,8 +34,8 @@ export function RetuneModule({ color, params, updateParams }: RetuneModuleProps)
         minWidth: 250,
       }}
     >
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#4891ff33]">
-        <span className="text-[10px] text-[#9dbfff]">2</span>
+      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-[#4891ff33]">
+        <span className="w-[16px] h-[16px] rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: `${color}2a`, color: '#9dbfff' }}>2</span>
         <span className="text-xs font-semibold tracking-wider uppercase text-text-primary">Retune</span>
         <div className="flex-1" />
         <button
@@ -46,12 +46,12 @@ export function RetuneModule({ color, params, updateParams }: RetuneModuleProps)
         />
       </div>
 
-      <div className="px-3 py-3 flex flex-col gap-2">
-        <div className="grid grid-cols-2 gap-2">
+      <div className="px-2 py-2 flex flex-col gap-1.5">
+        <div className="grid grid-cols-2 gap-1.5">
           <select
             value={params.retuneScale}
             onChange={(e) => updateParams({ retuneScale: e.target.value as EngineParams['retuneScale'] })}
-            className="text-xs rounded bg-surface-2 border border-border px-2 py-1.5 text-text-primary"
+            className="text-xs rounded bg-surface-2 border border-border px-2 py-1 text-text-primary"
           >
             {SCALE_OPTIONS.map((scale) => (
               <option key={scale} value={scale}>{scale.replace('_', ' ')}</option>
@@ -61,7 +61,7 @@ export function RetuneModule({ color, params, updateParams }: RetuneModuleProps)
           <select
             value={params.retuneKey}
             onChange={(e) => updateParams({ retuneKey: Number(e.target.value) })}
-            className="text-xs rounded bg-surface-2 border border-border px-2 py-1.5 text-text-primary"
+            className="text-xs rounded bg-surface-2 border border-border px-2 py-1 text-text-primary"
           >
             {NOTE_NAMES.map((note, index) => (
               <option key={note} value={index}>{note}</option>
@@ -81,45 +81,49 @@ export function RetuneModule({ color, params, updateParams }: RetuneModuleProps)
               updateParams({ retunePreserveTransients: false, retuneOutOfMaskMode: 'nearest' });
             }
           }}
-          className="text-xs rounded bg-surface-2 border border-border px-2 py-1.5 text-text-primary"
+          className="text-xs rounded bg-surface-2 border border-border px-2 py-1 text-text-primary"
         >
           {QUANTIZE_MODES.map((mode) => (
             <option key={mode} value={mode}>{mode}</option>
           ))}
         </select>
-      </div>
 
-      <div className="grid grid-cols-2 gap-3 px-3 pb-3">
-        <Knob
-          label="Speed"
-          value={params.retuneStrength}
-          onChange={(value) => updateParams({ retuneStrength: value })}
-          color={color}
-          displayValue={`${Math.round(params.retuneStrength * 100)}%`}
-        />
-        <Knob
-          label="Strength"
-          value={params.retuneTextureAmount}
-          onChange={(value) => updateParams({ retuneTextureAmount: value })}
-          color={color}
-          displayValue={`${Math.round(params.retuneTextureAmount * 100)}%`}
-        />
-        <Knob
-          label="Octave"
-          value={params.retuneAirMix}
-          onChange={(value) => updateParams({ retuneAirMix: value })}
-          color={color}
-          min={0}
-          max={1.5}
-          displayValue={params.retuneAirMix.toFixed(2)}
-        />
-        <Knob
-          label="Level"
-          value={params.retuneLowEndBlend}
-          onChange={(value) => updateParams({ retuneLowEndBlend: value })}
-          color={color}
-          displayValue={`${Math.round(params.retuneLowEndBlend * 100)}%`}
-        />
+        <div className="grid grid-cols-4 gap-1 justify-items-center">
+          <Knob
+            label="Speed"
+            size={48}
+            value={params.retuneStrength}
+            onChange={(value) => updateParams({ retuneStrength: value })}
+            color={color}
+            displayValue={`${Math.round(params.retuneStrength * 100)}%`}
+          />
+          <Knob
+            label="Strength"
+            size={48}
+            value={params.retuneTextureAmount}
+            onChange={(value) => updateParams({ retuneTextureAmount: value })}
+            color={color}
+            displayValue={`${Math.round(params.retuneTextureAmount * 100)}%`}
+          />
+          <Knob
+            label="Octave"
+            size={48}
+            value={params.retuneAirMix}
+            onChange={(value) => updateParams({ retuneAirMix: value })}
+            color={color}
+            min={0}
+            max={1.5}
+            displayValue={params.retuneAirMix.toFixed(2)}
+          />
+          <Knob
+            label="Level"
+            size={48}
+            value={params.retuneLowEndBlend}
+            onChange={(value) => updateParams({ retuneLowEndBlend: value })}
+            color={color}
+            displayValue={`${Math.round(params.retuneLowEndBlend * 100)}%`}
+          />
+        </div>
       </div>
     </div>
   );
