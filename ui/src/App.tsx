@@ -13,9 +13,21 @@ declare global {
   }
 }
 
-const SAT_TYPES = ['Analog Tape', 'Tube', 'Diode Clip', 'Foldback', 'Soft Clip'];
+const SATURATION_TYPE_OPTIONS = ['Analog Tape', 'Tube', 'Diode Clip', 'Foldback', 'Soft Clip'];
 const SOFTNESS = ['Soft', 'Medium', 'Hard'];
 const NOTE_OPTIONS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+function getSaturationTypeLabel(type: 'tape' | 'tube' | 'wavefold'): string {
+  if (type === 'wavefold') return 'Foldback';
+  if (type === 'tube') return 'Tube';
+  return 'Analog Tape';
+}
+
+function getSaturationTypeValue(label: string): 'tape' | 'tube' | 'wavefold' {
+  if (label === 'Tube') return 'tube';
+  if (label === 'Foldback') return 'wavefold';
+  return 'tape';
+}
 
 function ModuleShell({
   number,
@@ -158,13 +170,10 @@ export default function App() {
           <div className="grid grid-cols-2 gap-1.5">
             <select
               className="text-xs rounded bg-surface-2 border border-border px-2 py-1 text-text-primary"
-              value={params.saturateType === 'wavefold' ? 'Foldback' : params.saturateType === 'tube' ? 'Tube' : 'Analog Tape'}
-              onChange={(e) => {
-                const val = e.target.value;
-                updateParams({ saturateType: val === 'Tube' ? 'tube' : val === 'Foldback' ? 'wavefold' : 'tape' });
-              }}
+              value={getSaturationTypeLabel(params.saturateType)}
+              onChange={(e) => updateParams({ saturateType: getSaturationTypeValue(e.target.value) })}
             >
-              {SAT_TYPES.map((type) => <option key={type}>{type}</option>)}
+              {SATURATION_TYPE_OPTIONS.map((type) => <option key={type}>{type}</option>)}
             </select>
             <select value={params.saturateSoftness} onChange={(e) => updateParams({ saturateSoftness: e.target.value as 'soft' | 'medium' | 'hard' })} className="text-xs rounded bg-surface-2 border border-border px-2 py-1 text-text-primary">
               {SOFTNESS.map((softness) => <option key={softness} value={softness.toLowerCase()}>{softness}</option>)}
@@ -190,13 +199,10 @@ export default function App() {
           <div className="grid grid-cols-2 gap-1.5">
             <select
               className="text-xs rounded bg-surface-2 border border-border px-2 py-1 text-text-primary"
-              value={params.saturate2Type === 'wavefold' ? 'Foldback' : params.saturate2Type === 'tube' ? 'Tube' : 'Analog Tape'}
-              onChange={(e) => {
-                const val = e.target.value;
-                updateParams({ saturate2Type: val === 'Tube' ? 'tube' : val === 'Foldback' ? 'wavefold' : 'tape' });
-              }}
+              value={getSaturationTypeLabel(params.saturate2Type)}
+              onChange={(e) => updateParams({ saturate2Type: getSaturationTypeValue(e.target.value) })}
             >
-              {SAT_TYPES.map((type) => <option key={type}>{type}</option>)}
+              {SATURATION_TYPE_OPTIONS.map((type) => <option key={type}>{type}</option>)}
             </select>
             <select value={params.saturate2Softness} onChange={(e) => updateParams({ saturate2Softness: e.target.value as 'soft' | 'medium' | 'hard' })} className="text-xs rounded bg-surface-2 border border-border px-2 py-1 text-text-primary">
               {SOFTNESS.map((softness) => <option key={softness} value={softness.toLowerCase()}>{softness}</option>)}
